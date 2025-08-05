@@ -4,9 +4,8 @@ from datetime import datetime, timedelta
 from typing import Dict, List
 import time
 import logging
-import random
 import requests
-from fake_useragent import UserAgent
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -16,23 +15,16 @@ class MarketDataService:
         self.cache = {}
         self.cache_timeout = 300  # 5分のキャッシュ
         self.last_request_time = 0
-        self.min_request_interval = 2
+        self.min_request_interval = 2  # 最小リクエスト間隔（秒）
         
-        # User-Agentを設定
-        self.ua = UserAgent()
-        self.setup_session()
-        
-    def setup_session(self):
-        """セッションを設定"""
+        # ブラウザからのアクセスを偽装するためのセッション
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': self.ua.random,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         })
+        
+        # yfinanceにカスタムセッションを設定
+        yf.utils._requests = self.session
         
     def _rate_limit(self):
         """レート制限を実装"""
@@ -43,9 +35,9 @@ class MarketDataService:
         self.last_request_time = time.time()
         
     def get_latest_data(self) -> Dict:
-        """最新の価格データを取得（15分遅延）"""
+        """最新の価格データを取得"""
         # キャッシュチェック
-        cache_key = "latest_data"
+        cache_key = f"latest_{self.symbol}"
         if cache_key in self.cache:
             cached_data, cached_time = self.cache[cache_key]
             if time.time() - cached_time < self.cache_timeout:
@@ -53,47 +45,55 @@ class MarketDataService:
         
         try:
             self._rate_limit()
+            ticker = yf.Ticker(self.symbol, session=self.session)
             
-            # yfinanceのダウンロード関数を使用（より安定）
-            df = yf.download(
-                self.symbol,
-                period='1d',
-                interval='1m',
-                progress=False,
-                show_errors=False,
-                timeout=10
-            )
+            # より短い期間でデータを取得
+            hist = ticker.history(period="2d", interval="1m")
             
-            if df.empty:
-                logger.warning(f"No data available for {self.symbol}, using dummy data")
-                return self._generate_latest_dummy_data()
+            if hist.empty:
+                logger.warning(f"No data available for {self.symbol}, trying alternative approach")
+                # 代替として5分足データを試す
+                hist = ticker.history(period="5d", interval="5m")
+            
+            if hist.empty:
+                logger.warning(f"Still no data available for {self.symbol}")
+                # デフォルト値を返す
+                return self._get_default_latest_data()
             
             # 最新の価格を取得
-            latest = df.iloc[-1]
-            first = df.iloc[0]
-            
-            # 15分遅延を適用
-            delay = timedelta(minutes=15)
+            latest = hist.iloc[-1]
+            previous_close = hist.iloc[0]['Close'] if len(hist) > 1 else latest['Close']
             
             data = {
                 "symbol": self.symbol,
-                "price": round(float(latest['Close']), 2),
-                "change": round(float(latest['Close'] - first['Close']), 2),
-                "changePercent": round(float((latest['Close'] - first['Close']) / first['Close'] * 100), 2) if first['Close'] != 0 else 0,
-                "timestamp": (datetime.now() - delay).isoformat()
+                "price": float(latest['Close']),
+                "change": float(latest['Close'] - previous_close),
+                "changePercent": float((latest['Close'] - previous_close) / previous_close * 100) if previous_close != 0 else 0,
+                "timestamp": datetime.now().isoformat()
             }
             
             # キャッシュに保存
             self.cache[cache_key] = (data, time.time())
+            logger.info(f"Successfully fetched latest data: {data['price']}")
             
             return data
             
         except Exception as e:
             logger.error(f"Error fetching latest data: {e}")
-            return self._generate_latest_dummy_data()
+            return self._get_default_latest_data()
+    
+    def _get_default_latest_data(self) -> Dict:
+        """デフォルトの最新データを返す"""
+        return {
+            "symbol": self.symbol,
+            "price": 17000 + np.random.uniform(-100, 100),  # ランダムな変動を追加
+            "change": np.random.uniform(-50, 50),
+            "changePercent": np.random.uniform(-0.5, 0.5),
+            "timestamp": datetime.now().isoformat()
+        }
     
     def get_historical_data(self, symbol: str, interval: str) -> List[Dict]:
-        """履歴データを取得"""
+        """履歴データを取得 - 時間足に応じた最適な期間設定"""
         # キャッシュチェック
         cache_key = f"historical_{symbol}_{interval}"
         if cache_key in self.cache:
@@ -101,61 +101,60 @@ class MarketDataService:
             if time.time() - cached_time < self.cache_timeout:
                 return cached_data
         
-        period_map = {
-            "1m": ("1d", "1m"),
-            "3m": ("5d", "5m"),
-            "15m": ("5d", "15m"),
-            "1H": ("1mo", "1h"),
-            "4H": ("3mo", "1d"),
-            "1D": ("1y", "1d"),
-            "1W": ("2y", "1wk")
+        # 時間足に応じた期間とインターバルの設定
+        period_interval_map = {
+            "1m": ("2d", "1m"),      # 2日間の1分足
+            "3m": ("5d", "5m"),      # 5日間の5分足（3分足は5分足で代用）
+            "5m": ("5d", "5m"),      # 5日間の5分足
+            "15m": ("20d", "15m"),   # 20日間の15分足
+            "1H": ("2y", "1h"),      # 2年間の1時間足
+            "4H": ("2y", "1h"),      # 2年間の1時間足（4時間足に変換）
+            "1D": ("max", "1d"),     # 全期間の日足
+            "1W": ("max", "1wk")     # 全期間の週足
         }
         
-        period, yf_interval = period_map.get(interval, ("1mo", "1d"))
+        period, yf_interval = period_interval_map.get(interval, ("1mo", "1d"))
         
         try:
             self._rate_limit()
             
             # シンボルの修正
             if symbol == "^NDX":
-                symbol = self.symbol
-            
-            # yfinanceのダウンロード関数を使用
-            df = yf.download(
-                symbol,
-                period=period,
-                interval=yf_interval,
-                progress=False,
-                show_errors=False,
-                timeout=10,
-                session=self.session
-            )
+                symbol = "NQ=F"
+                
+            ticker = yf.Ticker(symbol, session=self.session)
+            df = ticker.history(period=period, interval=yf_interval)
             
             if df.empty:
-                logger.warning(f"No historical data available for {symbol}")
+                logger.warning(f"No historical data available for {symbol} with period={period}, interval={yf_interval}")
+                # より短い期間で再試行
+                if period == "max":
+                    period = "5y"
+                    df = ticker.history(period=period, interval=yf_interval)
+            
+            if df.empty:
+                logger.warning(f"Still no data, generating dummy data")
                 return self._generate_dummy_data(interval)
+            
+            # 4時間足の場合は1時間足データを変換
+            if interval == "4H":
+                df = self._convert_to_4h(df)
             
             # データを整形
             data = []
             for index, row in df.iterrows():
-                # indexがDatetimeIndexの場合の処理
-                if hasattr(index, 'timestamp'):
-                    timestamp = int(index.timestamp())
-                else:
-                    # MultiIndexの場合（複数銘柄）
-                    timestamp = int(index[0].timestamp())
-                
                 data.append({
-                    "time": timestamp,
-                    "open": round(float(row["Open"]), 2),
-                    "high": round(float(row["High"]), 2),
-                    "low": round(float(row["Low"]), 2),
-                    "close": round(float(row["Close"]), 2),
+                    "time": int(index.timestamp()),
+                    "open": float(row["Open"]),
+                    "high": float(row["High"]),
+                    "low": float(row["Low"]),
+                    "close": float(row["Close"]),
                     "volume": int(row["Volume"]) if not pd.isna(row["Volume"]) else 0
                 })
             
             # キャッシュに保存
             self.cache[cache_key] = (data, time.time())
+            logger.info(f"Successfully fetched {len(data)} data points for {symbol} {interval}")
             
             return data
             
@@ -163,76 +162,63 @@ class MarketDataService:
             logger.error(f"Error fetching historical data: {e}")
             return self._generate_dummy_data(interval)
     
-    def _generate_latest_dummy_data(self) -> Dict:
-        """最新のダミーデータを生成"""
-        base_price = 17000 + random.uniform(-100, 100)
-        change = random.uniform(-50, 50)
+    def _convert_to_4h(self, df: pd.DataFrame) -> pd.DataFrame:
+        """1時間足データを4時間足に変換"""
+        # 4時間ごとにリサンプリング
+        df_4h = df.resample('4H').agg({
+            'Open': 'first',
+            'High': 'max',
+            'Low': 'min',
+            'Close': 'last',
+            'Volume': 'sum'
+        }).dropna()
         
-        return {
-            "symbol": self.symbol,
-            "price": round(base_price, 2),
-            "change": round(change, 2),
-            "changePercent": round(change / base_price * 100, 2),
-            "timestamp": datetime.now().isoformat()
-        }
+        return df_4h
     
     def _generate_dummy_data(self, interval: str) -> List[Dict]:
-        """リアルな動きのダミーデータを生成"""
+        """ダミーデータを生成（開発用）"""
+        import random
+        
         now = datetime.now()
         data = []
         base_price = 17000
         
         # インターバルに応じたデータポイント数
         points_map = {
-            "1m": 60,
-            "3m": 100,
-            "15m": 96,
-            "1H": 168,
-            "4H": 90,
-            "1D": 365,
-            "1W": 104
+            "1m": 120,    # 2時間分
+            "3m": 100,    # 5時間分
+            "5m": 100,    # 8時間分
+            "15m": 96,    # 24時間分
+            "1H": 168,    # 1週間分
+            "4H": 90,     # 15日分
+            "1D": 365,    # 1年分
+            "1W": 104     # 2年分
         }
         
         num_points = points_map.get(interval, 100)
         
-        # トレンドを生成
-        trend = random.choice([-1, 0, 1]) * random.uniform(0.0001, 0.0005)
-        
         for i in range(num_points):
-            # ボラティリティを時間帯によって変化
-            volatility = random.uniform(0.001, 0.003)
-            
-            # 価格変動を生成（トレンド + ランダム）
-            change_percent = trend + random.gauss(0, volatility)
-            
-            # OHLCを生成
-            open_price = base_price
-            close_price = base_price * (1 + change_percent)
-            
-            # 高値と安値を生成
-            intrabar_volatility = abs(change_percent) * random.uniform(0.5, 1.5)
-            if close_price > open_price:
-                high_price = close_price + base_price * intrabar_volatility * random.uniform(0, 0.5)
-                low_price = open_price - base_price * intrabar_volatility * random.uniform(0, 0.3)
-            else:
-                high_price = open_price + base_price * intrabar_volatility * random.uniform(0, 0.3)
-                low_price = close_price - base_price * intrabar_volatility * random.uniform(0, 0.5)
+            # ランダムな価格変動を生成（よりリアルな変動）
+            change = random.gauss(0, 30)  # 正規分布でより自然な変動
+            open_price = base_price + change
+            close_price = open_price + random.gauss(0, 15)
+            high_price = max(open_price, close_price) + abs(random.gauss(0, 5))
+            low_price = min(open_price, close_price) - abs(random.gauss(0, 5))
             
             # 時間を計算
-            if interval == "1m":
-                timestamp = now - timedelta(minutes=num_points-i)
-            elif interval == "3m":
-                timestamp = now - timedelta(minutes=3*(num_points-i))
-            elif interval == "15m":
-                timestamp = now - timedelta(minutes=15*(num_points-i))
-            elif interval == "1H":
-                timestamp = now - timedelta(hours=num_points-i)
-            elif interval == "4H":
-                timestamp = now - timedelta(hours=4*(num_points-i))
-            elif interval == "1D":
-                timestamp = now - timedelta(days=num_points-i)
-            else:  # 1W
-                timestamp = now - timedelta(weeks=num_points-i)
+            time_delta_map = {
+                "1m": timedelta(minutes=1),
+                "3m": timedelta(minutes=3),
+                "5m": timedelta(minutes=5),
+                "15m": timedelta(minutes=15),
+                "1H": timedelta(hours=1),
+                "4H": timedelta(hours=4),
+                "1D": timedelta(days=1),
+                "1W": timedelta(weeks=1)
+            }
+            
+            time_delta = time_delta_map.get(interval, timedelta(hours=1))
+            timestamp = now - (time_delta * (num_points - i))
             
             data.append({
                 "time": int(timestamp.timestamp()),
@@ -240,10 +226,9 @@ class MarketDataService:
                 "high": round(high_price, 2),
                 "low": round(low_price, 2),
                 "close": round(close_price, 2),
-                "volume": random.randint(5000000, 15000000)
+                "volume": random.randint(1000000, 10000000)
             })
             
-            # 次の足の開始価格を更新
             base_price = close_price
         
         return data
