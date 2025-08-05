@@ -34,6 +34,15 @@ function App() {
     }
   }, [timeFrame]);
 
+  const loadSentiment = useCallback(async () => {
+    try {
+      const sentimentRes = await axios.get(`${API_URL}/api/sentiment`);
+      setSentiment(sentimentRes.data || { buy_percentage: 50, sell_percentage: 50 });
+    } catch (error) {
+      console.error('Failed to update sentiment:', error);
+    }
+  }, []);
+
   const loadInitialData = useCallback(async () => {
     try {
       console.log('Loading initial data...');
@@ -44,13 +53,11 @@ function App() {
       setComments(commentsRes.data.comments || []);
       
       // センチメントを取得
-      const sentimentRes = await axios.get(`${API_URL}/api/sentiment`);
-      console.log('Sentiment loaded:', sentimentRes.data);
-      setSentiment(sentimentRes.data || { buy_percentage: 50, sell_percentage: 50 });
+      await loadSentiment();
     } catch (error) {
       console.error('Failed to load initial data:', error);
     }
-  }, []);
+  }, [loadSentiment]);
 
   useEffect(() => {
     // WebSocket接続を初期化
@@ -87,21 +94,12 @@ function App() {
       console.log('Cleaning up WebSocket connection');
       ws.close();
     };
-  }, []); // 初回のみ実行
+  }, [loadInitialData, loadChartData, loadSentiment]);
 
   useEffect(() => {
     // 時間枠が変更されたらチャートデータを再読み込み
     loadChartData();
   }, [timeFrame, loadChartData]);
-
-  const loadSentiment = async () => {
-    try {
-      const sentimentRes = await axios.get(`${API_URL}/api/sentiment`);
-      setSentiment(sentimentRes.data || { buy_percentage: 50, sell_percentage: 50 });
-    } catch (error) {
-      console.error('Failed to update sentiment:', error);
-    }
-  };
 
   const handlePostComment = async (content, emotionIcon) => {
     console.log('Posting comment:', content, emotionIcon);
