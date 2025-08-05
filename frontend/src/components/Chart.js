@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createChart } from 'lightweight-charts';
 import CommentBubble from './CommentBubble';
 
@@ -8,7 +8,56 @@ const Chart = ({ data, comments, onPriceUpdate }) => {
   const seriesRef = useRef();
   const [visibleComments, setVisibleComments] = useState([]);
 
+  const aggregateComments = useCallback((comments) => {
+    // 近接するコメントを集約
+    const priceThreshold = 10; // 価格の閾値
+    const aggregated = [];
+    
+    comments.forEach(comment => {
+      const nearby = aggregated.find(group => {
+        // 価格が近い場合は集約
+        return Math.abs(group.price - comment.price) < priceThreshold;
+      });
+      
+      if (nearby) {
+        nearby.comments.push(comment);
+      } else {
+        aggregated.push({
+          price: comment.price,
+          timestamp: comment.timestamp,
+          comments: [comment]
+        });
+      }
+    });
+    
+    return aggregated;
+  }, []);
+
+  const updateVisibleComments = useCallback(() => {
+    // 表示範囲内のコメントをフィルタリング
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    try {
+      const visibleRange = chart.timeScale().getVisibleRange();
+      if (!visibleRange) return;
+
+      const filtered = comments.filter(comment => {
+        const timestamp = new Date(comment.timestamp).getTime() / 1000;
+        return timestamp >= visibleRange.from && timestamp <= visibleRange.to;
+      });
+
+      // コメントの集約処理
+      const aggregated = aggregateComments(filtered);
+      setVisibleComments(aggregated);
+    } catch (error) {
+      console.error('Error updating visible comments:', error);
+    }
+  }, [comments, aggregateComments]);
+
   useEffect(() => {
+    if (!chartContainerRef.current) return;
+
     // チャートを初期化
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
@@ -48,17 +97,25 @@ const Chart = ({ data, comments, onPriceUpdate }) => {
 
     // リサイズハンドラー
     const handleResize = () => {
-      chart.applyOptions({ 
-        width: chartContainerRef.current.clientWidth 
-      });
+      if (chartContainerRef.current) {
+        chart.applyOptions({ 
+          width: chartContainerRef.current.clientWidth 
+        });
+      }
     };
     window.addEventListener('resize', handleResize);
 
     // 価格更新の監視
     chart.subscribeCrosshairMove((param) => {
-      if (param.point && param.seriesPrices.get(candlestickSeries)) {
-        const price = param.seriesPrices.get(candlestickSeries).close;
-        onPriceUpdate(price);
+      if (!param || !param.seriesPrices || !candlestickSeries) return;
+      
+      try {
+        const price = param.seriesPrices.get(candlestickSeries);
+        if (price && price.close) {
+          onPriceUpdate(price.close);
+        }
+      } catch (error) {
+        console.error('Error in crosshair move:', error);
       }
     });
 
@@ -70,8 +127,12 @@ const Chart = ({ data, comments, onPriceUpdate }) => {
 
   useEffect(() => {
     // データを更新
-    if (seriesRef.current && data.length > 0) {
-      seriesRef.current.setData(data);
+    if (seriesRef.current && data && data.length > 0) {
+      try {
+        seriesRef.current.setData(data);
+      } catch (error) {
+        console.error('Error setting chart data:', error);
+      }
     }
   }, [data]);
 
@@ -92,50 +153,7 @@ const Chart = ({ data, comments, onPriceUpdate }) => {
         timeScale.unsubscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange);
       };
     }
-  }, [comments]);
-
-  const updateVisibleComments = () => {
-    // 表示範囲内のコメントをフィルタリング
-    const chart = chartRef.current;
-    if (!chart) return;
-
-    const visibleRange = chart.timeScale().getVisibleRange();
-    if (!visibleRange) return;
-
-    const filtered = comments.filter(comment => {
-      const timestamp = new Date(comment.timestamp).getTime() / 1000;
-      return timestamp >= visibleRange.from && timestamp <= visibleRange.to;
-    });
-
-    // コメントの集約処理
-    const aggregated = aggregateComments(filtered);
-    setVisibleComments(aggregated);
-  };
-
-  const aggregateComments = (comments) => {
-    // 近接するコメントを集約
-    const priceThreshold = 10; // 価格の閾値
-    const aggregated = [];
-    
-    comments.forEach(comment => {
-      const nearby = aggregated.find(group => {
-        // 価格が近い場合は集約
-        return Math.abs(group.price - comment.price) < priceThreshold;
-      });
-      
-      if (nearby) {
-        nearby.comments.push(comment);
-      } else {
-        aggregated.push({
-          price: comment.price,
-          timestamp: comment.timestamp,
-          comments: [comment]
-        });
-      }
-    });
-    
-    return aggregated;
-  };
+  }, [comments, updateVisibleComments]);
 
   return (
     <div className="chart-container">
