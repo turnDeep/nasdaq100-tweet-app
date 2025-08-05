@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -9,6 +9,7 @@ from typing import List, Dict
 import os
 from dotenv import load_dotenv
 import logging
+from decimal import Decimal
 
 from database import get_db, init_db
 from models import Comment
@@ -43,7 +44,8 @@ class ConnectionManager:
         logger.info(f"WebSocket connected. Total connections: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
         logger.info(f"WebSocket disconnected. Total connections: {len(self.active_connections)}")
 
     async def broadcast(self, message: dict):
@@ -73,6 +75,8 @@ async def startup_event():
 
 async def market_data_updater():
     """マーケットデータを定期的に更新"""
+    await asyncio.sleep(10)  # 初回は10秒待つ
+    
     while True:
         try:
             data = market_service.get_latest_data()
@@ -80,36 +84,52 @@ async def market_data_updater():
                 "type": "market_update",
                 "data": data
             })
-            logger.info(f"Market data updated: {data['price']}")
+            logger.info(f"Market data broadcasted: {data['price']}")
         except Exception as e:
             logger.error(f"Market data update error: {e}")
         
-        # 5分ごとに更新（レート制限対策）
+        # 5分ごとに更新
         await asyncio.sleep(300)
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
+    db: Session = None
+    
     try:
         while True:
             data = await websocket.receive_json()
+            logger.info(f"Received WebSocket message: {data}")
             
             if data["type"] == "post_comment":
-                # コメントをDBに保存
+                # 新しいDBセッションを作成
                 db = next(get_db())
                 try:
+                    # データ検証
+                    price = float(data.get("price", 0))
+                    content = str(data.get("content", "")).strip()
+                    emotion_icon = data.get("emotion_icon")
+                    
+                    if not content:
+                        logger.warning("Empty comment content received")
+                        continue
+                    
+                    # コメントをDBに保存
                     comment = Comment(
                         timestamp=datetime.utcnow(),
-                        price=data["price"],
-                        content=data["content"],
-                        emotion_icon=data.get("emotion_icon")
+                        price=Decimal(str(price)),
+                        content=content,
+                        emotion_icon=emotion_icon
                     )
                     db.add(comment)
                     db.commit()
                     db.refresh(comment)
                     
+                    # 保存成功をログ
+                    logger.info(f"Comment saved: ID={comment.id}, content={comment.content[:50]}...")
+                    
                     # 全クライアントにブロードキャスト
-                    await manager.broadcast({
+                    broadcast_data = {
                         "type": "new_comment",
                         "data": {
                             "id": comment.id,
@@ -118,19 +138,28 @@ async def websocket_endpoint(websocket: WebSocket):
                             "content": comment.content,
                             "emotion_icon": comment.emotion_icon
                         }
-                    })
-                    logger.info(f"New comment posted: {comment.content[:50]}...")
+                    }
+                    await manager.broadcast(broadcast_data)
+                    logger.info(f"Comment broadcasted: {broadcast_data}")
+                    
                 except Exception as e:
                     logger.error(f"Error saving comment: {e}")
-                    db.rollback()
+                    if db:
+                        db.rollback()
                 finally:
-                    db.close()
+                    if db:
+                        db.close()
+                        db = None
                 
     except WebSocketDisconnect:
+        logger.info("WebSocket disconnected")
         manager.disconnect(websocket)
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         manager.disconnect(websocket)
+    finally:
+        if db:
+            db.close()
 
 @app.get("/api/health")
 async def health_check():
@@ -141,6 +170,7 @@ async def health_check():
 async def get_market_data(symbol: str, interval: str):
     """マーケットデータを取得"""
     try:
+        logger.info(f"Fetching market data for {symbol} with interval {interval}")
         data = market_service.get_historical_data(symbol, interval)
         return {"success": True, "data": data}
     except Exception as e:
@@ -149,12 +179,15 @@ async def get_market_data(symbol: str, interval: str):
         return {"success": True, "data": []}
 
 @app.get("/api/comments")
-async def get_comments(hours: int = 24):
+async def get_comments(hours: int = 24, db: Session = Depends(get_db)):
     """指定時間内のコメントを取得"""
-    db = next(get_db())
     try:
         since = datetime.utcnow() - timedelta(hours=hours)
-        comments = db.query(Comment).filter(Comment.timestamp >= since).order_by(Comment.timestamp.desc()).all()
+        comments = db.query(Comment).filter(
+            Comment.timestamp >= since
+        ).order_by(Comment.timestamp.desc()).all()
+        
+        logger.info(f"Found {len(comments)} comments in the last {hours} hours")
         
         return {
             "comments": [
@@ -171,21 +204,16 @@ async def get_comments(hours: int = 24):
     except Exception as e:
         logger.error(f"Error getting comments: {e}")
         return {"comments": []}
-    finally:
-        db.close()
 
 @app.get("/api/sentiment")
-async def get_sentiment():
+async def get_sentiment(db: Session = Depends(get_db)):
     """センチメント分析結果を取得"""
-    db = next(get_db())
     try:
         analysis = sentiment_analyzer.analyze_recent_comments(db)
         return analysis
     except Exception as e:
         logger.error(f"Error getting sentiment: {e}")
         return {"buy_percentage": 50, "sell_percentage": 50, "total_comments": 0}
-    finally:
-        db.close()
 
 if __name__ == "__main__":
     import uvicorn
