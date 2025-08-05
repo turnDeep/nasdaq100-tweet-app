@@ -77,7 +77,21 @@ const Chart = ({ data, comments, onPriceUpdate }) => {
 
   useEffect(() => {
     // コメントの表示を更新
-    updateVisibleComments();
+    if (chartRef.current && comments.length > 0) {
+      const handleVisibleTimeRangeChange = () => {
+        updateVisibleComments();
+      };
+      
+      const timeScale = chartRef.current.timeScale();
+      timeScale.subscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange);
+      
+      // 初回更新
+      updateVisibleComments();
+      
+      return () => {
+        timeScale.unsubscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange);
+      };
+    }
   }, [comments]);
 
   const updateVisibleComments = () => {
@@ -100,13 +114,13 @@ const Chart = ({ data, comments, onPriceUpdate }) => {
 
   const aggregateComments = (comments) => {
     // 近接するコメントを集約
-    const threshold = 50; // ピクセル単位の閾値
+    const priceThreshold = 10; // 価格の閾値
     const aggregated = [];
     
     comments.forEach(comment => {
       const nearby = aggregated.find(group => {
         // 価格が近い場合は集約
-        return Math.abs(group.price - comment.price) < threshold;
+        return Math.abs(group.price - comment.price) < priceThreshold;
       });
       
       if (nearby) {
@@ -129,7 +143,7 @@ const Chart = ({ data, comments, onPriceUpdate }) => {
       <div className="comment-overlay">
         {visibleComments.map((group, index) => (
           <CommentBubble
-            key={index}
+            key={`comment-group-${index}`}
             group={group}
             chart={chartRef.current}
           />
