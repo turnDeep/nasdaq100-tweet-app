@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Chart from './components/Chart';
 import TimeFrameSelector from './components/TimeFrameSelector';
 import PositionIndicator from './components/PositionIndicator';
@@ -14,66 +14,89 @@ function App() {
   const [comments, setComments] = useState([]);
   const [sentiment, setSentiment] = useState({ buy_percentage: 50, sell_percentage: 50 });
   const [showPostModal, setShowPostModal] = useState(false);
-  const [currentPrice, setCurrentPrice] = useState(0);
+  const [currentPrice, setCurrentPrice] = useState(17000); // デフォルト値を設定
   const [chartData, setChartData] = useState([]);
 
-  useEffect(() => {
-    // WebSocket接続を初期化
-    const ws = new WebSocketService(`${API_URL.replace('http', 'ws')}/ws`);
-    
-    ws.on('new_comment', (data) => {
-      setComments(prev => [...prev, data]);
-    });
-    
-    ws.on('market_update', (data) => {
-      setCurrentPrice(data.price);
-    });
-
-    // 初期データを取得
-    loadInitialData();
-    
-    return () => {
-      ws.close();
-    };
-  }, []);
-
-  useEffect(() => {
-    // 時間枠が変更されたらチャートデータを再読み込み
-    loadChartData();
+  const loadChartData = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API_URL}/api/market/^NDX/${timeFrame}`);
+      if (res.data.data && res.data.data.length > 0) {
+        setChartData(res.data.data);
+        // 最新価格を設定
+        const latestData = res.data.data[res.data.data.length - 1];
+        if (latestData && latestData.close) {
+          setCurrentPrice(latestData.close);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load chart data:', error);
+    }
   }, [timeFrame]);
 
   const loadInitialData = async () => {
     try {
       // コメントを取得
       const commentsRes = await axios.get(`${API_URL}/api/comments`);
-      setComments(commentsRes.data.comments);
+      setComments(commentsRes.data.comments || []);
       
       // センチメントを取得
       const sentimentRes = await axios.get(`${API_URL}/api/sentiment`);
-      setSentiment(sentimentRes.data);
+      setSentiment(sentimentRes.data || { buy_percentage: 50, sell_percentage: 50 });
     } catch (error) {
       console.error('Failed to load initial data:', error);
     }
   };
 
-  const loadChartData = async () => {
-    try {
-      const res = await axios.get(`${API_URL}/api/market/^NDX/${timeFrame}`);
-      setChartData(res.data.data);
-    } catch (error) {
-      console.error('Failed to load chart data:', error);
-    }
-  };
+  useEffect(() => {
+    // WebSocket接続を初期化
+    const wsUrl = API_URL.replace('http', 'ws').replace('https', 'wss');
+    const ws = new WebSocketService(`${wsUrl}/ws`);
+    
+    ws.on('new_comment', (data) => {
+      setComments(prev => [...prev, data]);
+    });
+    
+    ws.on('market_update', (data) => {
+      if (data && data.price) {
+        setCurrentPrice(data.price);
+      }
+    });
+
+    // 初期データを取得
+    loadInitialData();
+    loadChartData();
+    
+    return () => {
+      ws.close();
+    };
+  }, [loadChartData]);
+
+  useEffect(() => {
+    // 時間枠が変更されたらチャートデータを再読み込み
+    loadChartData();
+  }, [timeFrame, loadChartData]);
 
   const handlePostComment = async (content, emotionIcon) => {
     const ws = WebSocketService.getInstance();
-    ws.send({
-      type: 'post_comment',
-      price: currentPrice,
-      content: content,
-      emotion_icon: emotionIcon
-    });
+    if (ws) {
+      ws.send({
+        type: 'post_comment',
+        price: currentPrice,
+        content: content,
+        emotion_icon: emotionIcon
+      });
+    }
     setShowPostModal(false);
+    
+    // センチメントを更新
+    setTimeout(async () => {
+      try {
+        const sentimentRes = await axios.get(`${API_URL}/api/sentiment`);
+        setSentiment(sentimentRes.data || { buy_percentage: 50, sell_percentage: 50 });
+      } catch (error) {
+        console.error('Failed to update sentiment:', error);
+      }
+    }, 500);
   };
 
   return (
