@@ -2,7 +2,9 @@ class WebSocketService {
   static instance = null;
   
   constructor(url) {
-    if (WebSocketService.instance) {
+    // 既存のインスタンスがある場合は新しく作成しない
+    if (WebSocketService.instance && WebSocketService.instance.ws && 
+        WebSocketService.instance.ws.readyState === WebSocket.OPEN) {
       return WebSocketService.instance;
     }
     
@@ -11,25 +13,32 @@ class WebSocketService {
     this.listeners = {};
     this.reconnectInterval = 5000;
     this.shouldReconnect = true;
-    this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 10;
+    this.messageQueue = []; // 接続前のメッセージを保持
     
     this.connect();
     WebSocketService.instance = this;
   }
   
   static getInstance() {
+    if (!WebSocketService.instance) {
+      console.error('WebSocketService not initialized');
+      return null;
+    }
     return WebSocketService.instance;
   }
   
   connect() {
     try {
-      console.log('Attempting WebSocket connection to:', this.url);
+      console.log('Connecting to WebSocket:', this.url);
       this.ws = new WebSocket(this.url);
       
       this.ws.onopen = () => {
         console.log('WebSocket connected');
-        this.reconnectAttempts = 0;
+        // キューに溜まったメッセージを送信
+        while (this.messageQueue.length > 0) {
+          const message = this.messageQueue.shift();
+          this.send(message);
+        }
       };
       
       this.ws.onmessage = (event) => {
@@ -42,11 +51,9 @@ class WebSocketService {
         }
       };
       
-      this.ws.onclose = (event) => {
-        console.log('WebSocket disconnected:', event.code, event.reason);
-        if (this.shouldReconnect && this.reconnectAttempts < this.maxReconnectAttempts) {
-          this.reconnectAttempts++;
-          console.log(`Reconnecting... (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+      this.ws.onclose = () => {
+        console.log('WebSocket disconnected');
+        if (this.shouldReconnect) {
           setTimeout(() => this.connect(), this.reconnectInterval);
         }
       };
@@ -64,7 +71,6 @@ class WebSocketService {
       this.listeners[event] = [];
     }
     this.listeners[event].push(callback);
-    console.log(`Listener added for event: ${event}`);
   }
   
   off(event, callback) {
@@ -73,30 +79,24 @@ class WebSocketService {
   }
   
   emit(event, data) {
-    if (!this.listeners[event]) {
-      console.log(`No listeners for event: ${event}`);
-      return;
-    }
-    console.log(`Emitting event: ${event} to ${this.listeners[event].length} listeners`);
+    if (!this.listeners[event]) return;
     this.listeners[event].forEach(callback => {
       try {
         callback(data);
       } catch (error) {
-        console.error(`Error in event listener for ${event}:`, error);
+        console.error(`Error in ${event} listener:`, error);
       }
     });
   }
   
   send(data) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      console.log('Sending WebSocket message:', data);
-      this.ws.send(JSON.stringify(data));
+      const message = JSON.stringify(data);
+      console.log('Sending WebSocket message:', data.type);
+      this.ws.send(message);
     } else {
-      console.error('WebSocket is not connected. ReadyState:', this.ws?.readyState);
-      // 再接続を試みる
-      if (this.shouldReconnect && this.reconnectAttempts < this.maxReconnectAttempts) {
-        this.connect();
-      }
+      console.log('WebSocket not connected, queuing message');
+      this.messageQueue.push(data);
     }
   }
   
