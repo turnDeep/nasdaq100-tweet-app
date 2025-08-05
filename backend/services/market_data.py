@@ -1,11 +1,11 @@
-import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List
 import time
 import logging
-import requests
+import json
 import numpy as np
+from curl_cffi import requests
 
 logger = logging.getLogger(__name__)
 
@@ -17,14 +17,8 @@ class MarketDataService:
         self.last_request_time = 0
         self.min_request_interval = 2  # 最小リクエスト間隔（秒）
         
-        # ブラウザからのアクセスを偽装するためのセッション
-        self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        })
-        
-        # yfinanceにカスタムセッションを設定
-        yf.utils._requests = self.session
+        # curl_cffiのセッション設定
+        self.session = requests.Session(impersonate="chrome110")
         
     def _rate_limit(self):
         """レート制限を実装"""
@@ -33,6 +27,104 @@ class MarketDataService:
         if time_since_last_request < self.min_request_interval:
             time.sleep(self.min_request_interval - time_since_last_request)
         self.last_request_time = time.time()
+        
+    def _get_yahoo_finance_data(self, symbol: str, period: str, interval: str) -> pd.DataFrame:
+        """Yahoo Finance APIから直接データを取得"""
+        try:
+            self._rate_limit()
+            
+            # 期間を秒単位に変換
+            period_map = {
+                "1d": 86400,
+                "2d": 172800,
+                "5d": 432000,
+                "1mo": 2592000,
+                "3mo": 7776000,
+                "6mo": 15552000,
+                "1y": 31536000,
+                "2y": 63072000,
+                "5y": 157680000,
+                "10y": 315360000,
+                "max": 3153600000
+            }
+            
+            # 現在時刻と開始時刻を計算
+            period2 = int(time.time())
+            period1 = period2 - period_map.get(period, 86400)
+            
+            # Yahoo Finance APIのURL
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+            
+            params = {
+                "period1": period1,
+                "period2": period2,
+                "interval": interval,
+                "includePrePost": "true",
+                "events": "div%7Csplit%7Ccapitalgains",
+                "useYfid": "true",
+                "includeAdjustedClose": "true"
+            }
+            
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+                "Accept": "application/json",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-site"
+            }
+            
+            response = self.session.get(url, params=params, headers=headers)
+            
+            if response.status_code != 200:
+                logger.error(f"Failed to fetch data: HTTP {response.status_code}")
+                return pd.DataFrame()
+            
+            data = response.json()
+            
+            # データの解析
+            if 'chart' not in data or 'result' not in data['chart'] or len(data['chart']['result']) == 0:
+                logger.error("Invalid response structure from Yahoo Finance")
+                return pd.DataFrame()
+            
+            result = data['chart']['result'][0]
+            
+            if 'timestamp' not in result:
+                logger.error("No timestamp data in response")
+                return pd.DataFrame()
+            
+            # タイムスタンプ
+            timestamps = result['timestamp']
+            
+            # 価格データ
+            quotes = result['indicators']['quote'][0]
+            
+            # DataFrameを作成
+            df_data = {
+                'timestamp': timestamps,
+                'Open': quotes.get('open', []),
+                'High': quotes.get('high', []),
+                'Low': quotes.get('low', []),
+                'Close': quotes.get('close', []),
+                'Volume': quotes.get('volume', [])
+            }
+            
+            df = pd.DataFrame(df_data)
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
+            df.set_index('timestamp', inplace=True)
+            
+            # NaNを除去
+            df = df.dropna()
+            
+            logger.info(f"Successfully fetched {len(df)} data points for {symbol}")
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error fetching data from Yahoo Finance: {e}")
+            return pd.DataFrame()
         
     def get_latest_data(self) -> Dict:
         """最新の価格データを取得"""
@@ -44,25 +136,16 @@ class MarketDataService:
                 return cached_data
         
         try:
-            self._rate_limit()
-            ticker = yf.Ticker(self.symbol, session=self.session)
+            # 2日間の1分足データを取得
+            df = self._get_yahoo_finance_data(self.symbol, "2d", "1m")
             
-            # より短い期間でデータを取得
-            hist = ticker.history(period="2d", interval="1m")
-            
-            if hist.empty:
-                logger.warning(f"No data available for {self.symbol}, trying alternative approach")
-                # 代替として5分足データを試す
-                hist = ticker.history(period="5d", interval="5m")
-            
-            if hist.empty:
-                logger.warning(f"Still no data available for {self.symbol}")
-                # デフォルト値を返す
+            if df.empty:
+                logger.warning(f"No data available for {self.symbol}")
                 return self._get_default_latest_data()
             
             # 最新の価格を取得
-            latest = hist.iloc[-1]
-            previous_close = hist.iloc[0]['Close'] if len(hist) > 1 else latest['Close']
+            latest = df.iloc[-1]
+            previous_close = df.iloc[0]['Close'] if len(df) > 1 else latest['Close']
             
             data = {
                 "symbol": self.symbol,
@@ -86,7 +169,7 @@ class MarketDataService:
         """デフォルトの最新データを返す"""
         return {
             "symbol": self.symbol,
-            "price": 17000 + np.random.uniform(-100, 100),  # ランダムな変動を追加
+            "price": 17000 + np.random.uniform(-100, 100),
             "change": np.random.uniform(-50, 50),
             "changePercent": np.random.uniform(-0.5, 0.5),
             "timestamp": datetime.now().isoformat()
@@ -106,34 +189,25 @@ class MarketDataService:
             "1m": ("2d", "1m"),      # 2日間の1分足
             "3m": ("5d", "5m"),      # 5日間の5分足（3分足は5分足で代用）
             "5m": ("5d", "5m"),      # 5日間の5分足
-            "15m": ("20d", "15m"),   # 20日間の15分足
-            "1H": ("2y", "1h"),      # 2年間の1時間足
-            "4H": ("2y", "1h"),      # 2年間の1時間足（4時間足に変換）
-            "1D": ("max", "1d"),     # 全期間の日足
-            "1W": ("max", "1wk")     # 全期間の週足
+            "15m": ("1mo", "15m"),   # 1ヶ月間の15分足
+            "1H": ("3mo", "1h"),     # 3ヶ月間の1時間足
+            "4H": ("6mo", "1h"),     # 6ヶ月間の1時間足（4時間足に変換）
+            "1D": ("2y", "1d"),      # 2年間の日足
+            "1W": ("5y", "1wk")      # 5年間の週足
         }
         
         period, yf_interval = period_interval_map.get(interval, ("1mo", "1d"))
         
         try:
-            self._rate_limit()
-            
             # シンボルの修正
             if symbol == "^NDX":
                 symbol = "NQ=F"
-                
-            ticker = yf.Ticker(symbol, session=self.session)
-            df = ticker.history(period=period, interval=yf_interval)
+            
+            # Yahoo Financeからデータを取得
+            df = self._get_yahoo_finance_data(symbol, period, yf_interval)
             
             if df.empty:
-                logger.warning(f"No historical data available for {symbol} with period={period}, interval={yf_interval}")
-                # より短い期間で再試行
-                if period == "max":
-                    period = "5y"
-                    df = ticker.history(period=period, interval=yf_interval)
-            
-            if df.empty:
-                logger.warning(f"Still no data, generating dummy data")
+                logger.warning(f"No historical data available for {symbol}")
                 return self._generate_dummy_data(interval)
             
             # 4時間足の場合は1時間足データを変換
