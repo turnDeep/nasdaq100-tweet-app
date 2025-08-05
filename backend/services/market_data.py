@@ -5,17 +5,34 @@ from typing import Dict, List
 import time
 import logging
 import random
-from curl_cffi import requests
+import requests
+from fake_useragent import UserAgent
 
 logger = logging.getLogger(__name__)
 
 class MarketDataService:
     def __init__(self):
-        self.symbols = ["NQ=F", "^IXIC", "QQQ"]  # 複数のシンボルを試す
+        self.symbol = "NQ=F"  # NASDAQ 100 futures
         self.cache = {}
         self.cache_timeout = 300  # 5分のキャッシュ
         self.last_request_time = 0
         self.min_request_interval = 2
+        
+        # User-Agentを設定
+        self.ua = UserAgent()
+        self.setup_session()
+        
+    def setup_session(self):
+        """セッションを設定"""
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': self.ua.random,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
+        })
         
     def _rate_limit(self):
         """レート制限を実装"""
@@ -24,34 +41,6 @@ class MarketDataService:
         if time_since_last_request < self.min_request_interval:
             time.sleep(self.min_request_interval - time_since_last_request)
         self.last_request_time = time.time()
-        
-    def _get_ticker_with_fallback(self, primary_symbol=None):
-        """複数のシンボルを試してデータを取得"""
-        symbols_to_try = [primary_symbol] if primary_symbol else []
-        symbols_to_try.extend([s for s in self.symbols if s != primary_symbol])
-        
-        for symbol in symbols_to_try:
-            try:
-                self._rate_limit()
-                
-                # curl_cffiを使用してセッションを作成
-                session = requests.Session(impersonate="chrome110")
-                
-                # yfinanceにセッションを設定
-                ticker = yf.Ticker(symbol, session=session)
-                
-                # データの取得を試みる
-                hist = ticker.history(period="1d", interval="1m")
-                if not hist.empty:
-                    logger.info(f"Successfully fetched data for {symbol}")
-                    return ticker, hist, symbol
-                    
-            except Exception as e:
-                logger.warning(f"Failed to fetch {symbol}: {e}")
-                continue
-        
-        # すべて失敗した場合はNoneを返す
-        return None, None, None
         
     def get_latest_data(self) -> Dict:
         """最新の価格データを取得（15分遅延）"""
@@ -63,36 +52,36 @@ class MarketDataService:
                 return cached_data
         
         try:
-            ticker, hist, symbol = self._get_ticker_with_fallback()
+            self._rate_limit()
             
-            if hist is None or hist.empty:
-                logger.warning("No data available from any source, using dummy data")
-                # ダミーデータを使用
-                base_price = 17000 + random.uniform(-100, 100)
-                change = random.uniform(-50, 50)
-                
-                data = {
-                    "symbol": "NQ=F",
-                    "price": round(base_price, 2),
-                    "change": round(change, 2),
-                    "changePercent": round(change / base_price * 100, 2),
-                    "timestamp": datetime.now().isoformat()
-                }
-            else:
-                # 最新の価格を取得
-                latest = hist.iloc[-1]
-                previous_close = hist.iloc[0]['Close'] if len(hist) > 1 else latest['Close']
-                
-                # 15分遅延を適用
-                delay = timedelta(minutes=15)
-                
-                data = {
-                    "symbol": symbol,
-                    "price": round(float(latest['Close']), 2),
-                    "change": round(float(latest['Close'] - previous_close), 2),
-                    "changePercent": round(float((latest['Close'] - previous_close) / previous_close * 100), 2) if previous_close != 0 else 0,
-                    "timestamp": (datetime.now() - delay).isoformat()
-                }
+            # yfinanceのダウンロード関数を使用（より安定）
+            df = yf.download(
+                self.symbol,
+                period='1d',
+                interval='1m',
+                progress=False,
+                show_errors=False,
+                timeout=10
+            )
+            
+            if df.empty:
+                logger.warning(f"No data available for {self.symbol}, using dummy data")
+                return self._generate_latest_dummy_data()
+            
+            # 最新の価格を取得
+            latest = df.iloc[-1]
+            first = df.iloc[0]
+            
+            # 15分遅延を適用
+            delay = timedelta(minutes=15)
+            
+            data = {
+                "symbol": self.symbol,
+                "price": round(float(latest['Close']), 2),
+                "change": round(float(latest['Close'] - first['Close']), 2),
+                "changePercent": round(float((latest['Close'] - first['Close']) / first['Close'] * 100), 2) if first['Close'] != 0 else 0,
+                "timestamp": (datetime.now() - delay).isoformat()
+            }
             
             # キャッシュに保存
             self.cache[cache_key] = (data, time.time())
@@ -101,15 +90,7 @@ class MarketDataService:
             
         except Exception as e:
             logger.error(f"Error fetching latest data: {e}")
-            # エラー時はダミーデータを返す
-            base_price = 17000 + random.uniform(-100, 100)
-            return {
-                "symbol": "NQ=F",
-                "price": round(base_price, 2),
-                "change": 0,
-                "changePercent": 0,
-                "timestamp": datetime.now().isoformat()
-            }
+            return self._generate_latest_dummy_data()
     
     def get_historical_data(self, symbol: str, interval: str) -> List[Dict]:
         """履歴データを取得"""
@@ -133,31 +114,39 @@ class MarketDataService:
         period, yf_interval = period_map.get(interval, ("1mo", "1d"))
         
         try:
+            self._rate_limit()
+            
             # シンボルの修正
             if symbol == "^NDX":
-                symbol = "NQ=F"
+                symbol = self.symbol
             
-            ticker, _, used_symbol = self._get_ticker_with_fallback(symbol)
-            
-            if ticker is None:
-                logger.warning(f"No historical data available for {symbol}, using dummy data")
-                return self._generate_dummy_data(interval)
-            
-            # curl_cffiセッションを使用
-            session = requests.Session(impersonate="chrome110")
-            ticker = yf.Ticker(used_symbol, session=session)
-            
-            df = ticker.history(period=period, interval=yf_interval)
+            # yfinanceのダウンロード関数を使用
+            df = yf.download(
+                symbol,
+                period=period,
+                interval=yf_interval,
+                progress=False,
+                show_errors=False,
+                timeout=10,
+                session=self.session
+            )
             
             if df.empty:
-                logger.warning(f"Empty historical data for {used_symbol}")
+                logger.warning(f"No historical data available for {symbol}")
                 return self._generate_dummy_data(interval)
             
             # データを整形
             data = []
             for index, row in df.iterrows():
+                # indexがDatetimeIndexの場合の処理
+                if hasattr(index, 'timestamp'):
+                    timestamp = int(index.timestamp())
+                else:
+                    # MultiIndexの場合（複数銘柄）
+                    timestamp = int(index[0].timestamp())
+                
                 data.append({
-                    "time": int(index.timestamp()),
+                    "time": timestamp,
                     "open": round(float(row["Open"]), 2),
                     "high": round(float(row["High"]), 2),
                     "low": round(float(row["Low"]), 2),
@@ -173,6 +162,19 @@ class MarketDataService:
         except Exception as e:
             logger.error(f"Error fetching historical data: {e}")
             return self._generate_dummy_data(interval)
+    
+    def _generate_latest_dummy_data(self) -> Dict:
+        """最新のダミーデータを生成"""
+        base_price = 17000 + random.uniform(-100, 100)
+        change = random.uniform(-50, 50)
+        
+        return {
+            "symbol": self.symbol,
+            "price": round(base_price, 2),
+            "change": round(change, 2),
+            "changePercent": round(change / base_price * 100, 2),
+            "timestamp": datetime.now().isoformat()
+        }
     
     def _generate_dummy_data(self, interval: str) -> List[Dict]:
         """リアルな動きのダミーデータを生成"""
