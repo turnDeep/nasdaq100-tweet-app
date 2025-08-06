@@ -1,0 +1,52 @@
+# フロントエンドディレクトリを除外
+frontend/
+
+# Gitファイル
+.git/
+.gitignore
+
+# ドキュメント
+README.md
+*.md
+
+# Docker関連
+docker-compose.yml
+Dockerfile.*
+
+# Python関連
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.Python
+**/pip-log.txt
+**/pip-delete-this-directory.txt
+**/.tox/
+**/.coverage
+**/.coverage.*
+**/.cache
+**/nosetests.xml
+**/coverage.xml
+**/*.cover
+**/*.log
+**/.git
+**/.mypy_cache
+**/.pytest_cache
+**/.hypothesis
+
+# 仮想環境
+**/venv/
+**/env/
+**/ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# 環境変数
+**/.env
+**/.env.local
+**/.env.*.local
