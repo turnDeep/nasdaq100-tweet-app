@@ -1,25 +1,582 @@
-/* 既存のスタイルに以下を追加 */
-
-.current-price {
-  text-align: center;
-  font-size: 1.5rem;
-  font-weight: 600;
-  color: #333;
-  margin-bottom: 1rem;
+/* リセットと基本設定 */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
-.comments-count {
-  text-align: center;
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: linear-gradient(135deg, #7dd3c0 0%, #5eead4 100%);
+  min-height: 100vh;
+}
+
+/* アプリケーションコンテナ */
+.app {
+  min-height: 100vh;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* ヘッダー */
+.app-header {
+  background: white;
+  border-radius: 2rem;
+  padding: 1rem 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  width: 100%;
+  max-width: 1200px;
+  margin-bottom: 1.5rem;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.1rem;
+  font-weight: bold;
+  color: #1f2937;
+}
+
+.logo-icon {
+  width: 40px;
+  height: 40px;
+  background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+}
+
+/* タイムフレームセレクター */
+.timeframe-selector {
+  display: flex;
+  gap: 0.25rem;
+  background: #f3f4f6;
+  padding: 0.25rem;
+  border-radius: 1rem;
+  flex-wrap: wrap;
+}
+
+.timeframe-button {
+  background: transparent;
+  border: none;
+  color: #6b7280;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  border-radius: 0.75rem;
+  transition: all 0.3s ease;
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.timeframe-button:hover {
+  background: white;
+  color: #1f2937;
+}
+
+.timeframe-button.active {
+  background: white;
+  color: #1f2937;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/* ポジションインジケーター */
+.position-indicator {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 200px;
+}
+
+.position-label {
   font-size: 0.875rem;
-  color: #666;
-  margin-top: 1rem;
+  color: #6b7280;
+  text-align: center;
+}
+
+.position-bar {
+  display: flex;
+  height: 35px;
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.position-sell {
+  background: #ef4444;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: bold;
+  font-size: 0.875rem;
+  transition: width 0.5s ease;
+}
+
+.position-buy {
+  background: #10b981;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: bold;
+  font-size: 0.875rem;
+  transition: width 0.5s ease;
+}
+
+/* メインコンテンツ */
+.app-main {
+  width: 100%;
+  max-width: 1200px;
+  position: relative;
+}
+
+/* 現在価格表示 - デザインに合わせて削除または非表示 */
+.current-price {
+  display: none;
+}
+
+/* チャートコンテナ */
+.chart-container {
+  background: white;
+  border-radius: 2rem;
+  padding: 2rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  position: relative;
+  min-height: 600px;
+}
+
+.chart {
+  width: 100%;
+  height: 500px;
+  position: relative;
+}
+
+/* コメントオーバーレイ */
+.comment-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* コメントバブル */
+.comment-bubble {
+  position: absolute;
+  background: white;
+  border-radius: 2rem;
+  padding: 0.5rem 1rem;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  max-width: 250px;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+  z-index: 11;
+}
+
+.comment-bubble:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+.comment-bubble-single {
+  animation: fadeIn 0.5s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.comment-bubble-aggregated {
+  background: #fbbf24;
+  color: #1f2937;
+  font-weight: bold;
+  padding: 0.75rem;
+  border-radius: 50%;
+  width: 45px;
+  height: 45px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+}
+
+.comment-emoji {
+  font-size: 1.5rem;
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+  border-radius: 50%;
+  width: 35px;
+  height: 35px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.comment-text {
+  flex: 1;
+  color: #1f2937;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+/* コメント数 - デザインに合わせて非表示 */
+.comments-count {
+  display: none;
+}
+
+/* 新規投稿ボタン */
+.new-post-button {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  background: #ec4899;
+  color: white;
+  border: none;
+  padding: 1rem 2rem;
+  border-radius: 2rem;
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: pointer;
+  box-shadow: 0 4px 20px rgba(236, 72, 153, 0.3);
+  transition: all 0.3s ease;
+  z-index: 1000;
+}
+
+.new-post-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 25px rgba(236, 72, 153, 0.4);
+  background: #db2777;
+}
+
+/* モーダル */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  animation: fadeInModal 0.3s ease;
+  padding: 1rem;
+}
+
+@keyframes fadeInModal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.modal {
+  background: white;
+  border-radius: 1.5rem;
+  width: 100%;
+  max-width: 500px;
+  max-height: 90vh;
+  overflow-y: auto;
+  animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.modal-title {
+  font-size: 1.25rem;
+  font-weight: bold;
+  color: #1f2937;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: #6b7280;
+  cursor: pointer;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+}
+
+.modal-close:hover {
+  background: #f3f4f6;
+  color: #1f2937;
+}
+
+.modal-content {
+  padding: 1.5rem;
 }
 
 .price-info {
-  background-color: #f0f9ff;
-  border-radius: 0.5rem;
-  padding: 0.5rem 1rem;
-  margin-bottom: 0.5rem;
-  color: #1e3a8a;
-  font-weight: 500;
+  background: linear-gradient(135deg, #7dd3c0 0%, #5eead4 100%);
+  border-radius: 1rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  color: white;
+  font-weight: 600;
+  text-align: center;
+}
+
+.comment-input {
+  width: 100%;
+  min-height: 120px;
+  padding: 1rem;
+  border: 2px solid #e5e7eb;
+  border-radius: 1rem;
+  font-size: 1rem;
+  resize: vertical;
+  transition: border-color 0.2s ease;
+  font-family: inherit;
+}
+
+.comment-input:focus {
+  outline: none;
+  border-color: #7dd3c0;
+}
+
+.emotion-selector {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.emotion-option {
+  background: #f3f4f6;
+  border: 2px solid transparent;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  font-size: 1.5rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.emotion-option:hover {
+  transform: scale(1.1);
+  background: #e5e7eb;
+}
+
+.emotion-option.selected {
+  border-color: #7dd3c0;
+  background: #d1fae5;
+  transform: scale(1.1);
+}
+
+.modal-actions {
+  display: flex;
+  gap: 1rem;
+  padding: 1.5rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.button {
+  flex: 1;
+  padding: 0.75rem 1.5rem;
+  border-radius: 1rem;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
+}
+
+.button-secondary {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.button-secondary:hover {
+  background: #e5e7eb;
+  color: #1f2937;
+}
+
+.button-primary {
+  background: linear-gradient(135deg, #7dd3c0 0%, #5eead4 100%);
+  color: white;
+}
+
+.button-primary:hover {
+  box-shadow: 0 4px 15px rgba(125, 211, 192, 0.4);
+  transform: translateY(-1px);
+}
+
+.button-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* レスポンシブデザイン - タブレット */
+@media (max-width: 768px) {
+  .app {
+    padding: 1rem;
+  }
+
+  .app-header {
+    padding: 1rem;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .logo {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .timeframe-selector {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .position-indicator {
+    width: 100%;
+  }
+
+  .chart-container {
+    padding: 1rem;
+    border-radius: 1.5rem;
+  }
+
+  .chart {
+    height: 400px;
+  }
+
+  .new-post-button {
+    bottom: 1rem;
+    right: 1rem;
+    padding: 0.875rem 1.5rem;
+  }
+}
+
+/* レスポンシブデザイン - スマートフォン */
+@media (max-width: 480px) {
+  .app {
+    padding: 0.5rem;
+  }
+
+  .app-header {
+    border-radius: 1rem;
+    padding: 0.75rem;
+  }
+
+  .logo-text {
+    font-size: 1rem;
+  }
+
+  .timeframe-selector {
+    padding: 0.125rem;
+  }
+
+  .timeframe-button {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.8rem;
+  }
+
+  .position-bar {
+    height: 30px;
+  }
+
+  .chart-container {
+    border-radius: 1rem;
+    padding: 0.75rem;
+  }
+
+  .chart {
+    height: 350px;
+  }
+
+  .comment-bubble {
+    font-size: 0.75rem;
+    padding: 0.375rem 0.75rem;
+    max-width: 180px;
+  }
+
+  .comment-emoji {
+    width: 28px;
+    height: 28px;
+    font-size: 1.2rem;
+  }
+
+  .new-post-button {
+    padding: 0.75rem 1.25rem;
+    font-size: 0.9rem;
+  }
+
+  .modal {
+    border-radius: 1rem;
+  }
+
+  .modal-header {
+    padding: 1rem;
+  }
+
+  .modal-content {
+    padding: 1rem;
+  }
+
+  .modal-actions {
+    padding: 1rem;
+    flex-direction: column;
+  }
+
+  .button {
+    width: 100%;
+  }
 }
