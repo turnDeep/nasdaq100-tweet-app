@@ -24,13 +24,14 @@ load_dotenv()
 
 app = FastAPI()
 
-# CORS設定
+# CORS設定 - より明示的に設定
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "*"],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # WebSocket接続管理
@@ -70,6 +71,8 @@ sentiment_analyzer = SentimentAnalyzer()
 async def startup_event():
     init_db()
     logger.info("Database initialized")
+    logger.info(f"Backend running on port {os.getenv('PORT', 8000)}")
+    logger.info("CORS enabled for all origins")
     # マーケットデータの定期更新を開始
     asyncio.create_task(market_data_updater())
 
@@ -110,13 +113,22 @@ async def websocket_endpoint(websocket: WebSocket):
                     content = str(data.get("content", "")).strip()
                     emotion_icon = data.get("emotion_icon")
                     
+                    # タイムスタンプの処理
+                    # クライアントから送られてきた場合はそれを使用、なければ現在時刻-15分
+                    if "timestamp" in data:
+                        # クライアントから送られたタイムスタンプ（秒単位のUNIXタイム）
+                        timestamp = datetime.fromtimestamp(data["timestamp"])
+                    else:
+                        # 15分遅延を考慮（Yahoo Financeのディレイに合わせる）
+                        timestamp = datetime.utcnow() - timedelta(minutes=15)
+                    
                     if not content:
                         logger.warning("Empty comment content received")
                         continue
                     
                     # コメントをDBに保存
                     comment = Comment(
-                        timestamp=datetime.utcnow(),
+                        timestamp=timestamp,
                         price=Decimal(str(price)),
                         content=content,
                         emotion_icon=emotion_icon
@@ -126,7 +138,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     db.refresh(comment)
                     
                     # 保存成功をログ
-                    logger.info(f"Comment saved: ID={comment.id}, content={comment.content[:50]}...")
+                    logger.info(f"Comment saved: ID={comment.id}, timestamp={comment.timestamp}, content={comment.content[:50]}...")
                     
                     # 全クライアントにブロードキャスト
                     broadcast_data = {
@@ -179,15 +191,31 @@ async def get_market_data(symbol: str, interval: str):
         return {"success": True, "data": []}
 
 @app.get("/api/comments")
-async def get_comments(hours: int = 24, db: Session = Depends(get_db)):
-    """指定時間内のコメントを取得"""
+async def get_comments(hours: int = 24, interval: str = None, db: Session = Depends(get_db)):
+    """指定時間内のコメントを取得（時間足に応じてフィルタリング）"""
     try:
+        # 時間足ごとの集計期間を定義（分単位）
+        interval_hours = {
+            "1m": 0.5,    # 30分
+            "3m": 1,      # 1時間
+            "5m": 2,      # 2時間
+            "15m": 4,     # 4時間
+            "1H": 12,     # 12時間
+            "4H": 24,     # 24時間
+            "1D": 168,    # 1週間
+            "1W": 720     # 30日
+        }
+        
+        # intervalが指定されている場合は、それに応じた期間を使用
+        if interval and interval in interval_hours:
+            hours = interval_hours[interval]
+        
         since = datetime.utcnow() - timedelta(hours=hours)
         comments = db.query(Comment).filter(
             Comment.timestamp >= since
         ).order_by(Comment.timestamp.desc()).all()
         
-        logger.info(f"Found {len(comments)} comments in the last {hours} hours")
+        logger.info(f"Found {len(comments)} comments in the last {hours} hours for interval {interval}")
         
         return {
             "comments": [
@@ -206,10 +234,23 @@ async def get_comments(hours: int = 24, db: Session = Depends(get_db)):
         return {"comments": []}
 
 @app.get("/api/sentiment")
-async def get_sentiment(db: Session = Depends(get_db)):
-    """センチメント分析結果を取得"""
+async def get_sentiment(interval: str = None, db: Session = Depends(get_db)):
+    """センチメント分析結果を取得（時間足に応じた期間）"""
     try:
-        analysis = sentiment_analyzer.analyze_recent_comments(db)
+        # 時間足ごとの集計期間を定義（時間単位）
+        interval_hours = {
+            "1m": 0.5,    # 30分
+            "3m": 1,      # 1時間
+            "5m": 2,      # 2時間
+            "15m": 4,     # 4時間
+            "1H": 12,     # 12時間
+            "4H": 24,     # 24時間
+            "1D": 168,    # 1週間
+            "1W": 720     # 30日
+        }
+        
+        hours = interval_hours.get(interval, 1)
+        analysis = sentiment_analyzer.analyze_recent_comments(db, hours)
         return analysis
     except Exception as e:
         logger.error(f"Error getting sentiment: {e}")

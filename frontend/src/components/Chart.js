@@ -2,11 +2,13 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createChart } from 'lightweight-charts';
 import CommentBubble from './CommentBubble';
 
-const Chart = ({ data, comments, onPriceUpdate }) => {
+const Chart = ({ data, comments, onPriceUpdate, onCandleClick }) => {
   const chartContainerRef = useRef();
   const chartRef = useRef();
   const seriesRef = useRef();
   const [visibleComments, setVisibleComments] = useState([]);
+  const clickTimeoutRef = useRef(null);
+  const lastClickRef = useRef(null);
 
   const aggregateComments = useCallback((comments) => {
     // 近接するコメントを集約
@@ -55,6 +57,137 @@ const Chart = ({ data, comments, onPriceUpdate }) => {
     }
   }, [comments, aggregateComments]);
 
+  const handleChartClick = useCallback((param) => {
+    if (!param || !seriesRef.current || !data || data.length === 0) {
+      console.log('Click params invalid:', { param, series: !!seriesRef.current, dataLength: data?.length });
+      return;
+    }
+
+    console.log('Chart clicked:', param);
+
+    // マウス座標から最も近いローソク足を探す
+    const timeScale = chartRef.current.timeScale();
+    const coordinate = param.point ? param.point.x : null;
+    
+    if (coordinate === null) {
+      console.log('No coordinate found');
+      return;
+    }
+
+    const time = timeScale.coordinateToTime(coordinate);
+    if (!time) {
+      console.log('No time found for coordinate:', coordinate);
+      return;
+    }
+
+    // 最も近いローソク足を探す
+    let closestCandle = null;
+    let minTimeDiff = Infinity;
+
+    data.forEach(candle => {
+      const timeDiff = Math.abs(candle.time - time);
+      if (timeDiff < minTimeDiff) {
+        minTimeDiff = timeDiff;
+        closestCandle = candle;
+      }
+    });
+
+    if (closestCandle) {
+      console.log('Closest candle found:', closestCandle);
+      
+      // onCandleClickを呼び出す
+      if (onCandleClick) {
+        onCandleClick({
+          time: closestCandle.time,
+          price: closestCandle.close,
+          open: closestCandle.open,
+          high: closestCandle.high,
+          low: closestCandle.low,
+          close: closestCandle.close
+        });
+      }
+    } else {
+      console.log('No candle found near click position');
+    }
+  }, [data, onCandleClick]);
+
+  // タッチ/長押し用のハンドラー
+  const handleLongPress = useCallback((e) => {
+    e.preventDefault();
+    
+    if (!chartRef.current || !chartContainerRef.current || !data || data.length === 0) return;
+    
+    const rect = chartContainerRef.current.getBoundingClientRect();
+    const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+    
+    const timeScale = chartRef.current.timeScale();
+    const time = timeScale.coordinateToTime(x);
+    
+    if (time) {
+      // 最も近いローソク足を探す
+      let closestCandle = null;
+      let minTimeDiff = Infinity;
+
+      data.forEach(candle => {
+        const timeDiff = Math.abs(candle.time - time);
+        if (timeDiff < minTimeDiff) {
+          minTimeDiff = timeDiff;
+          closestCandle = candle;
+        }
+      });
+
+      if (closestCandle && onCandleClick) {
+        onCandleClick({
+          time: closestCandle.time,
+          price: closestCandle.close,
+          open: closestCandle.open,
+          high: closestCandle.high,
+          low: closestCandle.low,
+          close: closestCandle.close
+        });
+      }
+    }
+  }, [data, onCandleClick]);
+
+  // マウス/タッチイベントハンドラー
+  const handlePointerDown = useCallback((e) => {
+    // モバイルデバイスの判定
+    const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    
+    if (isMobile) {
+      // モバイルの場合は長押し検出
+      clickTimeoutRef.current = setTimeout(() => {
+        handleLongPress(e);
+      }, 500);
+    }
+    
+    lastClickRef.current = Date.now();
+  }, [handleLongPress]);
+
+  const handlePointerUp = useCallback((e) => {
+    const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    
+    if (clickTimeoutRef.current) {
+      clearTimeout(clickTimeoutRef.current);
+      clickTimeoutRef.current = null;
+    }
+    
+    // PCの場合は通常のクリックとして処理
+    if (!isMobile && lastClickRef.current && (Date.now() - lastClickRef.current < 500)) {
+      // クリック位置からチャート上の座標を計算
+      if (chartContainerRef.current && chartRef.current) {
+        const rect = chartContainerRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        handleChartClick({
+          point: { x, y },
+          seriesPrices: new Map()
+        });
+      }
+    }
+  }, [handleChartClick]);
+
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -82,6 +215,9 @@ const Chart = ({ data, comments, onPriceUpdate }) => {
         timeVisible: true,
         secondsVisible: false,
       },
+      crosshair: {
+        mode: 1, // Magnet mode
+      },
     });
 
     const candlestickSeries = chart.addCandlestickSeries({
@@ -94,6 +230,15 @@ const Chart = ({ data, comments, onPriceUpdate }) => {
 
     chartRef.current = chart;
     seriesRef.current = candlestickSeries;
+
+    // チャートのクリックイベント
+    chart.subscribeClick(handleChartClick);
+
+    // タッチ/マウスイベントの登録
+    const container = chartContainerRef.current;
+    container.addEventListener('pointerdown', handlePointerDown);
+    container.addEventListener('pointerup', handlePointerUp);
+    container.addEventListener('pointercancel', handlePointerUp);
 
     // リサイズハンドラー
     const handleResize = () => {
@@ -120,15 +265,20 @@ const Chart = ({ data, comments, onPriceUpdate }) => {
     });
 
     return () => {
+      container.removeEventListener('pointerdown', handlePointerDown);
+      container.removeEventListener('pointerup', handlePointerUp);
+      container.removeEventListener('pointercancel', handlePointerUp);
       window.removeEventListener('resize', handleResize);
+      chart.unsubscribeClick(handleChartClick);
       chart.remove();
     };
-  }, [onPriceUpdate]);
+  }, [onPriceUpdate, handleChartClick, handlePointerDown, handlePointerUp]);
 
   useEffect(() => {
     // データを更新
     if (seriesRef.current && data && data.length > 0) {
       try {
+        console.log('Updating chart with', data.length, 'candles');
         seriesRef.current.setData(data);
       } catch (error) {
         console.error('Error setting chart data:', error);
@@ -157,7 +307,10 @@ const Chart = ({ data, comments, onPriceUpdate }) => {
 
   return (
     <div className="chart-container">
-      <div ref={chartContainerRef} className="chart" />
+      <div className="chart-instructions">
+        💡 PC: ローソク足をクリック | モバイル: ローソク足を長押しでコメント投稿
+      </div>
+      <div ref={chartContainerRef} className="chart" style={{ cursor: 'crosshair' }} />
       <div className="comment-overlay">
         {visibleComments.map((group, index) => (
           <CommentBubble

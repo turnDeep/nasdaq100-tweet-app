@@ -18,7 +18,10 @@
   "eslintConfig": {
     "extends": [
       "react-app"
-    ]
+    ],
+    "rules": {
+      "no-unused-vars": "warn"
+    }
   },
   "browserslist": {
     "production": [
@@ -31,6 +34,5 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
-  },
-  "proxy": "http://localhost:8000"
+  }
 }

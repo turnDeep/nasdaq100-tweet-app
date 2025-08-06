@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-const PostModal = ({ onClose, onSubmit, currentPrice }) => {
+const PostModal = ({ onClose, onSubmit, currentPrice, candleInfo }) => {
   const [content, setContent] = useState('');
   const [selectedEmotion, setSelectedEmotion] = useState(null);
   
@@ -23,16 +23,39 @@ const PostModal = ({ onClose, onSubmit, currentPrice }) => {
         </div>
         
         <div className="modal-content">
-          <div className="price-info">
-            現在価格: ${currentPrice.toFixed(2)}
-          </div>
+          {candleInfo && (
+            <div className="candle-info">
+              <div className="candle-info-time">
+                📅 {candleInfo.time}
+              </div>
+              <div className="candle-info-prices">
+                <div className="price-item">
+                  <span className="price-label">始値:</span>
+                  <span className="price-value">${candleInfo.open.toFixed(2)}</span>
+                </div>
+                <div className="price-item">
+                  <span className="price-label">高値:</span>
+                  <span className="price-value high">${candleInfo.high.toFixed(2)}</span>
+                </div>
+                <div className="price-item">
+                  <span className="price-label">安値:</span>
+                  <span className="price-value low">${candleInfo.low.toFixed(2)}</span>
+                </div>
+                <div className="price-item">
+                  <span className="price-label">終値:</span>
+                  <span className="price-value close">${candleInfo.close.toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+          )}
           
           <textarea
             className="comment-input"
-            placeholder="コメントを入力..."
+            placeholder="このポイントについてコメントを入力..."
             value={content}
             onChange={(e) => setContent(e.target.value)}
             maxLength={200}
+            autoFocus
           />
           
           <div className="emotion-selector">

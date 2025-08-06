@@ -11,6 +11,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d nasdaq100_app"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   backend:
     build: ./backend
@@ -18,23 +23,13 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql://user:password@db:5432/nasdaq100_app
+      PORT: 8000
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     volumes:
       - ./backend:/app
-
-  # フロントエンドはローカルでnpm startで実行するため無効化
-  # frontend:
-  #   build: ./frontend
-  #   ports:
-  #     - "3000:3000"
-  #   environment:
-  #     REACT_APP_API_URL: http://localhost:8000
-  #   depends_on:
-  #     - backend
-  #   volumes:
-  #     - ./frontend:/app
-  #     - /app/node_modules
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 volumes:
   postgres_data:

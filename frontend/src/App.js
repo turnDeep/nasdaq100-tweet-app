@@ -9,6 +9,48 @@ import './styles/App.css';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
+// デモデータ生成関数
+function generateDemoData(timeFrame) {
+  const now = Math.floor(Date.now() / 1000);
+  const intervals = {
+    '1m': 60,
+    '3m': 180,
+    '5m': 300,
+    '15m': 900,
+    '1H': 3600,
+    '4H': 14400,
+    '1D': 86400,
+    '1W': 604800
+  };
+  
+  const interval = intervals[timeFrame] || 900;
+  const numPoints = 100;
+  const data = [];
+  let basePrice = 17000;
+  
+  for (let i = 0; i < numPoints; i++) {
+    const time = now - (numPoints - i) * interval;
+    const change = (Math.random() - 0.5) * 100;
+    const open = basePrice + change;
+    const close = open + (Math.random() - 0.5) * 50;
+    const high = Math.max(open, close) + Math.random() * 20;
+    const low = Math.min(open, close) - Math.random() * 20;
+    
+    data.push({
+      time,
+      open: parseFloat(open.toFixed(2)),
+      high: parseFloat(high.toFixed(2)),
+      low: parseFloat(low.toFixed(2)),
+      close: parseFloat(close.toFixed(2)),
+      volume: Math.floor(Math.random() * 1000000)
+    });
+    
+    basePrice = close;
+  }
+  
+  return data;
+}
+
 function App() {
   const [timeFrame, setTimeFrame] = useState('15m');
   const [comments, setComments] = useState([]);
@@ -17,11 +59,23 @@ function App() {
   const [currentPrice, setCurrentPrice] = useState(17000);
   const [chartData, setChartData] = useState([]);
   const [wsService, setWsService] = useState(null);
+  const [selectedCandle, setSelectedCandle] = useState(null);
+  const [connectionError, setConnectionError] = useState(false);
 
   const loadChartData = useCallback(async () => {
     try {
       console.log('Loading chart data for timeframe:', timeFrame);
-      const res = await axios.get(`${API_URL}/api/market/^NDX/${timeFrame}`);
+      console.log('API URL:', `${API_URL}/api/market/^NDX/${timeFrame}`);
+      
+      const res = await axios.get(`${API_URL}/api/market/^NDX/${timeFrame}`, {
+        timeout: 5000,
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+      
+      console.log('API Response:', res);
+      
       if (res.data.data && res.data.data.length > 0) {
         setChartData(res.data.data);
         const latestData = res.data.data[res.data.data.length - 1];
@@ -29,26 +83,39 @@ function App() {
           setCurrentPrice(latestData.close);
         }
       }
+      setConnectionError(false);
     } catch (error) {
       console.error('Failed to load chart data:', error);
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        response: error.response,
+        config: error.config
+      });
+      setConnectionError(true);
+      // デモデータを設定
+      const demoData = generateDemoData(timeFrame);
+      setChartData(demoData);
+      setCurrentPrice(17000);
     }
   }, [timeFrame]);
 
   const loadSentiment = useCallback(async () => {
     try {
-      const sentimentRes = await axios.get(`${API_URL}/api/sentiment`);
+      // 時間足を指定してセンチメントを取得
+      const sentimentRes = await axios.get(`${API_URL}/api/sentiment?interval=${timeFrame}`);
       setSentiment(sentimentRes.data || { buy_percentage: 50, sell_percentage: 50 });
     } catch (error) {
       console.error('Failed to update sentiment:', error);
     }
-  }, []);
+  }, [timeFrame]);
 
   const loadInitialData = useCallback(async () => {
     try {
       console.log('Loading initial data...');
       
-      // コメントを取得
-      const commentsRes = await axios.get(`${API_URL}/api/comments`);
+      // 時間足に応じたコメントを取得
+      const commentsRes = await axios.get(`${API_URL}/api/comments?interval=${timeFrame}`);
       console.log('Comments loaded:', commentsRes.data.comments?.length || 0);
       setComments(commentsRes.data.comments || []);
       
@@ -57,7 +124,7 @@ function App() {
     } catch (error) {
       console.error('Failed to load initial data:', error);
     }
-  }, [loadSentiment]);
+  }, [loadSentiment, timeFrame]);
 
   useEffect(() => {
     // WebSocket接続を初期化
@@ -83,6 +150,8 @@ function App() {
       console.log('Market update received:', data);
       if (data && data.price) {
         setCurrentPrice(data.price);
+        // チャートデータに新しいポイントを追加
+        updateChartWithNewPrice(data.price);
       }
     });
 
@@ -90,32 +159,103 @@ function App() {
     loadInitialData();
     loadChartData();
     
+    // 定期的にチャートデータを更新（30秒ごと）
+    const intervalId = setInterval(() => {
+      loadChartData();
+    }, 30000);
+    
     return () => {
       console.log('Cleaning up WebSocket connection');
+      clearInterval(intervalId);
       ws.close();
     };
   }, [loadInitialData, loadChartData, loadSentiment]);
 
   useEffect(() => {
-    // 時間枠が変更されたらチャートデータを再読み込み
+    // 時間枠が変更されたらデータを再読み込み
     loadChartData();
-  }, [timeFrame, loadChartData]);
+    loadInitialData();
+  }, [timeFrame, loadChartData, loadInitialData]);
+
+  const updateChartWithNewPrice = useCallback((newPrice) => {
+    setChartData(prevData => {
+      if (!prevData || prevData.length === 0) return prevData;
+      
+      const lastCandle = prevData[prevData.length - 1];
+      const now = Math.floor(Date.now() / 1000);
+      
+      // 時間枠に応じた間隔を計算
+      const intervals = {
+        '1m': 60,
+        '3m': 180,
+        '5m': 300,
+        '15m': 900,
+        '1H': 3600,
+        '4H': 14400,
+        '1D': 86400,
+        '1W': 604800
+      };
+      
+      const interval = intervals[timeFrame] || 900;
+      
+      // 新しいローソク足を作成するか、既存のものを更新するか判断
+      if (now - lastCandle.time >= interval) {
+        // 新しいローソク足を追加
+        const newCandle = {
+          time: lastCandle.time + interval,
+          open: lastCandle.close,
+          high: Math.max(lastCandle.close, newPrice),
+          low: Math.min(lastCandle.close, newPrice),
+          close: newPrice,
+          volume: Math.floor(Math.random() * 1000000)
+        };
+        return [...prevData.slice(-99), newCandle]; // 最新100本を保持
+      } else {
+        // 既存のローソク足を更新
+        const updatedData = [...prevData];
+        const last = updatedData[updatedData.length - 1];
+        last.high = Math.max(last.high, newPrice);
+        last.low = Math.min(last.low, newPrice);
+        last.close = newPrice;
+        return updatedData;
+      }
+    });
+  }, [timeFrame]);
+
+  const handleCandleClick = useCallback((candleData) => {
+    console.log('Candle clicked:', candleData);
+    setSelectedCandle(candleData);
+    setShowPostModal(true);
+  }, []);
 
   const handlePostComment = async (content, emotionIcon) => {
     console.log('Posting comment:', content, emotionIcon);
     
-    if (wsService) {
+    if (wsService && selectedCandle) {
       wsService.send({
         type: 'post_comment',
-        price: currentPrice,
+        timestamp: selectedCandle.time,  // ローソク足の時間を送信
+        price: selectedCandle.close,      // ローソク足の終値を送信
         content: content,
         emotion_icon: emotionIcon
       });
     } else {
-      console.error('WebSocket service not initialized');
+      console.error('WebSocket service not initialized or candle not selected');
     }
     
     setShowPostModal(false);
+    setSelectedCandle(null);
+  };
+
+  const formatCandleTime = (timestamp) => {
+    const date = new Date(timestamp * 1000);
+    const options = {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    };
+    return date.toLocaleString('ja-JP', options);
   };
 
   return (
@@ -134,34 +274,36 @@ function App() {
         <PositionIndicator sentiment={sentiment} />
       </header>
       
-      <main className="app-main">
-        <div className="current-price">
-          現在価格: ${currentPrice.toFixed(2)}
+      {connectionError && (
+        <div className="connection-error">
+          ⚠️ バックエンドに接続できません。デモモードで実行中です。
         </div>
-        
+      )}
+      
+      <main className="app-main">
         <Chart 
           data={chartData}
           comments={comments}
           onPriceUpdate={setCurrentPrice}
+          onCandleClick={handleCandleClick}
         />
-        
-        <div className="comments-count">
-          コメント数: {comments.length}
-        </div>
-        
-        <button 
-          className="new-post-button"
-          onClick={() => setShowPostModal(true)}
-        >
-          NEW POST
-        </button>
       </main>
       
-      {showPostModal && (
+      {showPostModal && selectedCandle && (
         <PostModal
-          onClose={() => setShowPostModal(false)}
+          onClose={() => {
+            setShowPostModal(false);
+            setSelectedCandle(null);
+          }}
           onSubmit={handlePostComment}
-          currentPrice={currentPrice}
+          currentPrice={selectedCandle.close}
+          candleInfo={{
+            time: formatCandleTime(selectedCandle.time),
+            open: selectedCandle.open,
+            high: selectedCandle.high,
+            low: selectedCandle.low,
+            close: selectedCandle.close
+          }}
         />
       )}
     </div>
