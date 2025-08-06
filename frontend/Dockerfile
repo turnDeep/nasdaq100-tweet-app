@@ -5,11 +5,11 @@ WORKDIR /app
 
 # 依存関係のインストール（キャッシュ効率化）
 COPY package*.json ./
-RUN npm ci --only=production
+# ↓↓↓ ここを修正しました ↓↓↓
+RUN npm install --omit=dev
 
 # ソースコードのコピー
 COPY . .
-
 # ビルド時に環境変数を受け取る
 ARG REACT_APP_API_URL
 ENV REACT_APP_API_URL=${REACT_APP_API_URL}
