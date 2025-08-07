@@ -251,7 +251,7 @@ function App() {
     <div className="app">
       <header className="app-header">
         <div className="logo">
-          <span className="logo-icon">📈</span>
+          <img src="/nasu-icon.png" alt="NASDAQ 100" className="logo-icon" />
           <span className="logo-text">ナスダック100先物</span>
         </div>
         

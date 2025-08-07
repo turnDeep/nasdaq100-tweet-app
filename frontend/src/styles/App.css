@@ -52,12 +52,8 @@ body {
 .logo-icon {
   width: 40px;
   height: 40px;
-  background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.5rem;
+  object-fit: contain;
+  display: block;
 }
 
 /* エラーメッセージ */
@@ -575,6 +571,11 @@ body {
     justify-content: center;
   }
 
+  .logo-icon {
+    width: 35px;
+    height: 35px;
+  }
+
   .timeframe-selector {
     width: 100%;
     justify-content: center;
@@ -622,6 +623,11 @@ body {
 
   .logo-text {
     font-size: 1rem;
+  }
+
+  .logo-icon {
+    width: 30px;
+    height: 30px;
   }
 
   .timeframe-selector {
