@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
 
-const CommentBubble = ({ group, chart }) => {
+const CommentBubble = ({ group, chart, chartContainer }) => {
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isVisible, setIsVisible] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
 
   useEffect(() => {
-    if (!chart) return;
+    if (!chart || !chartContainer) return;
 
     const updatePosition = () => {
       try {
@@ -18,8 +18,16 @@ const CommentBubble = ({ group, chart }) => {
         const x = timeScale.timeToCoordinate(timestamp);
         const y = priceScale.priceToCoordinate(group.price);
         
+        // チャートコンテナの範囲内かチェック
+        const containerRect = chartContainer.getBoundingClientRect();
+        const chartRect = chartContainer.querySelector('.tv-lightweight-charts').getBoundingClientRect();
+        
         if (x !== null && y !== null && x >= 0 && y >= 0) {
-          setPosition({ x, y });
+          // チャート内の相対位置を計算
+          const relativeX = x;
+          const relativeY = y;
+          
+          setPosition({ x: relativeX, y: relativeY });
           setIsVisible(true);
         } else {
           setIsVisible(false);
@@ -50,7 +58,7 @@ const CommentBubble = ({ group, chart }) => {
         console.error('Error unsubscribing:', error);
       }
     };
-  }, [group, chart]);
+  }, [group, chart, chartContainer]);
 
   if (!isVisible) return null;
 
@@ -58,17 +66,17 @@ const CommentBubble = ({ group, chart }) => {
   if (group.comments.length === 1) {
     const comment = group.comments[0];
     
-    // ランダムな位置オフセット（重なり防止）
-    const offsetX = (comment.id % 3 - 1) * 20;
-    const offsetY = (comment.id % 2) * 30;
+    // コメントを右側に配置するためのオフセット
+    const offsetX = 10;
+    const offsetY = -10;
     
     return (
       <div 
         className="comment-bubble comment-bubble-single"
         style={{ 
           left: `${position.x + offsetX}px`, 
-          top: `${position.y - 40 + offsetY}px`,
-          transform: 'translateX(-50%)',
+          top: `${position.y + offsetY}px`,
+          transform: 'none',
           zIndex: 100 + (comment.id % 10)
         }}
         onClick={() => setShowDetails(!showDetails)}
@@ -90,7 +98,7 @@ const CommentBubble = ({ group, chart }) => {
         className="comment-bubble comment-bubble-aggregated"
         style={{ 
           left: `${position.x}px`, 
-          top: `${position.y - 20}px`,
+          top: `${position.y}px`,
           transform: 'translate(-50%, -50%)',
           zIndex: 200
         }}

@@ -23,31 +23,12 @@ const PostModal = ({ onClose, onSubmit, currentPrice, candleInfo }) => {
         </div>
         
         <div className="modal-content">
-          {candleInfo && (
-            <div className="candle-info">
-              <div className="candle-info-time">
-                📅 {candleInfo.time}
-              </div>
-              <div className="candle-info-prices">
-                <div className="price-item">
-                  <span className="price-label">始値:</span>
-                  <span className="price-value">${candleInfo.open.toFixed(2)}</span>
-                </div>
-                <div className="price-item">
-                  <span className="price-label">高値:</span>
-                  <span className="price-value high">${candleInfo.high.toFixed(2)}</span>
-                </div>
-                <div className="price-item">
-                  <span className="price-label">安値:</span>
-                  <span className="price-value low">${candleInfo.low.toFixed(2)}</span>
-                </div>
-                <div className="price-item">
-                  <span className="price-label">終値:</span>
-                  <span className="price-value close">${candleInfo.close.toFixed(2)}</span>
-                </div>
-              </div>
+          <div className="selected-price-info">
+            <div className="selected-price-label">選択した価格</div>
+            <div className="selected-price-value">
+              ${currentPrice.toFixed(2)}
             </div>
-          )}
+          </div>
           
           <textarea
             className="comment-input"

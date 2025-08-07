@@ -227,24 +227,30 @@ body {
 /* コメントバブル */
 .comment-bubble {
   position: absolute;
-  background: white;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
   border-radius: 2rem;
-  padding: 0.5rem 1rem;
+  padding: 0.4rem 0.8rem;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.875rem;
-  max-width: 250px;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  max-width: 200px;
   pointer-events: auto;
   cursor: pointer;
-  transition: transform 0.2s ease;
+  transition: all 0.2s ease;
   z-index: 11;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .comment-bubble:hover {
   transform: scale(1.05);
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+  background: rgba(255, 255, 255, 1);
+  max-width: 300px;
+  white-space: normal;
 }
 
 .comment-bubble-single {
@@ -263,36 +269,31 @@ body {
 }
 
 .comment-bubble-aggregated {
-  background: #fbbf24;
-  color: #1f2937;
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+  color: white;
   font-weight: bold;
-  padding: 0.75rem;
+  padding: 0.6rem;
   border-radius: 50%;
-  width: 45px;
-  height: 45px;
+  width: 40px;
+  height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
 }
 
 .comment-emoji {
-  font-size: 1.5rem;
-  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-  border-radius: 50%;
-  width: 35px;
-  height: 35px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  font-size: 1.2rem;
   flex-shrink: 0;
 }
 
 .comment-text {
   flex: 1;
   color: #1f2937;
-  font-size: 0.9rem;
-  line-height: 1.4;
+  font-size: 0.85rem;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* モーダル */
@@ -379,7 +380,28 @@ body {
   padding: 1.5rem;
 }
 
-/* ローソク足情報表示 */
+/* 選択した価格の表示 */
+.selected-price-info {
+  background: linear-gradient(135deg, #7dd3c0 0%, #5eead4 100%);
+  color: white;
+  padding: 1rem;
+  border-radius: 1rem;
+  margin-bottom: 1rem;
+  text-align: center;
+}
+
+.selected-price-label {
+  font-size: 0.875rem;
+  opacity: 0.9;
+  margin-bottom: 0.25rem;
+}
+
+.selected-price-value {
+  font-size: 1.5rem;
+  font-weight: bold;
+}
+
+/* ローソク足情報表示（削除予定だが互換性のため残す） */
 .candle-info {
   background: #f9fafb;
   border-radius: 1rem;
@@ -524,6 +546,18 @@ body {
   cursor: not-allowed;
 }
 
+/* コメント詳細ポップアップ */
+.comment-details {
+  background: white;
+  border-radius: 1rem;
+  padding: 0.75rem;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+  max-width: 250px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 300;
+}
+
 /* レスポンシブデザイン - タブレット */
 @media (max-width: 768px) {
   .app {
@@ -562,6 +596,16 @@ body {
   .chart-instructions {
     font-size: 0.8rem;
     padding: 0.5rem;
+  }
+
+  .comment-bubble {
+    font-size: 0.75rem;
+    padding: 0.3rem 0.6rem;
+    max-width: 150px;
+  }
+
+  .comment-emoji {
+    font-size: 1rem;
   }
 }
 
@@ -607,15 +651,17 @@ body {
   }
 
   .comment-bubble {
-    font-size: 0.75rem;
-    padding: 0.375rem 0.75rem;
-    max-width: 180px;
+    font-size: 0.7rem;
+    padding: 0.25rem 0.5rem;
+    max-width: 120px;
   }
 
   .comment-emoji {
-    width: 28px;
-    height: 28px;
-    font-size: 1.2rem;
+    font-size: 0.9rem;
+  }
+
+  .comment-text {
+    font-size: 0.7rem;
   }
 
   .modal {
@@ -639,7 +685,15 @@ body {
     width: 100%;
   }
 
-  .candle-info-prices {
-    grid-template-columns: 1fr;
+  .selected-price-info {
+    padding: 0.75rem;
+  }
+
+  .selected-price-label {
+    font-size: 0.75rem;
+  }
+
+  .selected-price-value {
+    font-size: 1.25rem;
   }
 }

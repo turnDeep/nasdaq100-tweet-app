@@ -11,13 +11,12 @@ const Chart = ({ data, comments, onPriceUpdate, onCandleClick }) => {
   const lastClickRef = useRef(null);
 
   const aggregateComments = useCallback((comments) => {
-    // 近接するコメントを集約
-    const priceThreshold = 10; // 価格の閾値
+    // 近接するコメントを集約（価格差を20に増やして集約を減らす）
+    const priceThreshold = 20;
     const aggregated = [];
     
     comments.forEach(comment => {
       const nearby = aggregated.find(group => {
-        // 価格が近い場合は集約
         return Math.abs(group.price - comment.price) < priceThreshold;
       });
       
@@ -36,78 +35,114 @@ const Chart = ({ data, comments, onPriceUpdate, onCandleClick }) => {
   }, []);
 
   const updateVisibleComments = useCallback(() => {
-    // 表示範囲内のコメントをフィルタリング
     const chart = chartRef.current;
     if (!chart) return;
 
     try {
       const visibleRange = chart.timeScale().getVisibleRange();
-      if (!visibleRange) return;
+      if (!visibleRange) {
+        // 可視範囲が取得できない場合は全コメントを表示
+        const aggregated = aggregateComments(comments);
+        setVisibleComments(aggregated);
+        return;
+      }
 
       const filtered = comments.filter(comment => {
         const timestamp = new Date(comment.timestamp).getTime() / 1000;
         return timestamp >= visibleRange.from && timestamp <= visibleRange.to;
       });
 
-      // コメントの集約処理
       const aggregated = aggregateComments(filtered);
       setVisibleComments(aggregated);
     } catch (error) {
       console.error('Error updating visible comments:', error);
+      // エラー時は全コメントを表示
+      const aggregated = aggregateComments(comments);
+      setVisibleComments(aggregated);
     }
   }, [comments, aggregateComments]);
 
   const handleChartClick = useCallback((param) => {
-    if (!param || !seriesRef.current || !data || data.length === 0) {
-      console.log('Click params invalid:', { param, series: !!seriesRef.current, dataLength: data?.length });
+    // チャートの外側や、データがない場合をクリックした場合は何もしない
+    if (!param.point || !param.time) {
+      console.log('Click outside chart area or no data');
       return;
     }
 
-    console.log('Chart clicked:', param);
+    // seriesPricesからローソク足データを取得
+    const candleSeries = seriesRef.current;
+    if (!candleSeries) {
+      console.log('No candle series');
+      return;
+    }
 
-    // マウス座標から最も近いローソク足を探す
-    const timeScale = chartRef.current.timeScale();
-    const coordinate = param.point ? param.point.x : null;
+    const priceData = param.seriesPrices?.get(candleSeries);
     
-    if (coordinate === null) {
-      console.log('No coordinate found');
-      return;
-    }
-
-    const time = timeScale.coordinateToTime(coordinate);
-    if (!time) {
-      console.log('No time found for coordinate:', coordinate);
-      return;
-    }
-
-    // 最も近いローソク足を探す
-    let closestCandle = null;
-    let minTimeDiff = Infinity;
-
-    data.forEach(candle => {
-      const timeDiff = Math.abs(candle.time - time);
-      if (timeDiff < minTimeDiff) {
-        minTimeDiff = timeDiff;
-        closestCandle = candle;
-      }
-    });
-
-    if (closestCandle) {
-      console.log('Closest candle found:', closestCandle);
+    if (priceData) {
+      console.log('クリックされたローソク足のデータ:', priceData);
+      
+      // Y座標から価格を推定（高値と安値の間で線形補間）
+      // param.pointは画面上の座標、priceDataには該当するローソク足の価格情報
+      let clickedPrice = priceData.close; // デフォルトは終値
+      
+      // チャートの高さを取得
+      const chartHeight = chartContainerRef.current?.clientHeight || 500;
+      const yRatio = param.point.y / chartHeight; // 0（上）から1（下）の比率
+      
+      // 高値から安値の間で線形補間（上が高値、下が安値）
+      const priceRange = priceData.high - priceData.low;
+      clickedPrice = priceData.high - (priceRange * yRatio);
+      
+      // ローソク足の範囲内に制限
+      clickedPrice = Math.max(priceData.low, Math.min(priceData.high, clickedPrice));
+      
+      console.log('計算された価格:', clickedPrice);
       
       // onCandleClickを呼び出す
       if (onCandleClick) {
         onCandleClick({
+          time: param.time,
+          price: clickedPrice,
+          open: priceData.open,
+          high: priceData.high,
+          low: priceData.low,
+          close: priceData.close
+        });
+      }
+    } else {
+      console.log('No price data available at click position');
+      
+      // priceDataがない場合は、時間だけを使って最も近いローソク足を探す
+      if (!data || data.length === 0) return;
+      
+      let closestCandle = null;
+      let minTimeDiff = Infinity;
+
+      data.forEach(candle => {
+        const timeDiff = Math.abs(candle.time - param.time);
+        if (timeDiff < minTimeDiff) {
+          minTimeDiff = timeDiff;
+          closestCandle = candle;
+        }
+      });
+
+      if (closestCandle && onCandleClick) {
+        // Y座標から価格を推定
+        const chartHeight = chartContainerRef.current?.clientHeight || 500;
+        const yRatio = param.point.y / chartHeight;
+        const priceRange = closestCandle.high - closestCandle.low;
+        const clickedPrice = closestCandle.high - (priceRange * yRatio);
+        const constrainedPrice = Math.max(closestCandle.low, Math.min(closestCandle.high, clickedPrice));
+        
+        onCandleClick({
           time: closestCandle.time,
-          price: closestCandle.close,
+          price: constrainedPrice,
           open: closestCandle.open,
           high: closestCandle.high,
           low: closestCandle.low,
           close: closestCandle.close
         });
       }
-    } else {
-      console.log('No candle found near click position');
     }
   }, [data, onCandleClick]);
 
@@ -119,6 +154,7 @@ const Chart = ({ data, comments, onPriceUpdate, onCandleClick }) => {
     
     const rect = chartContainerRef.current.getBoundingClientRect();
     const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+    const y = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
     
     const timeScale = chartRef.current.timeScale();
     const time = timeScale.coordinateToTime(x);
@@ -137,9 +173,16 @@ const Chart = ({ data, comments, onPriceUpdate, onCandleClick }) => {
       });
 
       if (closestCandle && onCandleClick) {
+        // Y座標から価格を推定
+        const chartHeight = chartContainerRef.current.clientHeight;
+        const yRatio = y / chartHeight;
+        const priceRange = closestCandle.high - closestCandle.low;
+        const clickedPrice = closestCandle.high - (priceRange * yRatio);
+        const constrainedPrice = Math.max(closestCandle.low, Math.min(closestCandle.high, clickedPrice));
+        
         onCandleClick({
           time: closestCandle.time,
-          price: closestCandle.close,
+          price: constrainedPrice,
           open: closestCandle.open,
           high: closestCandle.high,
           low: closestCandle.low,
@@ -151,11 +194,9 @@ const Chart = ({ data, comments, onPriceUpdate, onCandleClick }) => {
 
   // マウス/タッチイベントハンドラー
   const handlePointerDown = useCallback((e) => {
-    // モバイルデバイスの判定
     const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
     
     if (isMobile) {
-      // モバイルの場合は長押し検出
       clickTimeoutRef.current = setTimeout(() => {
         handleLongPress(e);
       }, 500);
@@ -172,21 +213,9 @@ const Chart = ({ data, comments, onPriceUpdate, onCandleClick }) => {
       clickTimeoutRef.current = null;
     }
     
-    // PCの場合は通常のクリックとして処理
-    if (!isMobile && lastClickRef.current && (Date.now() - lastClickRef.current < 500)) {
-      // クリック位置からチャート上の座標を計算
-      if (chartContainerRef.current && chartRef.current) {
-        const rect = chartContainerRef.current.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        
-        handleChartClick({
-          point: { x, y },
-          seriesPrices: new Map()
-        });
-      }
-    }
-  }, [handleChartClick]);
+    // PCの場合は通常のクリックとして処理（subscribeClickで処理されるので不要）
+    // モバイルの場合は長押しで処理
+  }, []);
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
@@ -234,7 +263,7 @@ const Chart = ({ data, comments, onPriceUpdate, onCandleClick }) => {
     // チャートのクリックイベント
     chart.subscribeClick(handleChartClick);
 
-    // タッチ/マウスイベントの登録
+    // タッチ/マウスイベントの登録（モバイル長押し用）
     const container = chartContainerRef.current;
     container.addEventListener('pointerdown', handlePointerDown);
     container.addEventListener('pointerup', handlePointerUp);
@@ -280,15 +309,20 @@ const Chart = ({ data, comments, onPriceUpdate, onCandleClick }) => {
       try {
         console.log('Updating chart with', data.length, 'candles');
         seriesRef.current.setData(data);
+        
+        // データ更新後にコメントの表示を更新
+        setTimeout(() => {
+          updateVisibleComments();
+        }, 100);
       } catch (error) {
         console.error('Error setting chart data:', error);
       }
     }
-  }, [data]);
+  }, [data, updateVisibleComments]);
 
   useEffect(() => {
     // コメントの表示を更新
-    if (chartRef.current && comments.length > 0) {
+    if (chartRef.current) {
       const handleVisibleTimeRangeChange = () => {
         updateVisibleComments();
       };
@@ -296,8 +330,10 @@ const Chart = ({ data, comments, onPriceUpdate, onCandleClick }) => {
       const timeScale = chartRef.current.timeScale();
       timeScale.subscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange);
       
-      // 初回更新
-      updateVisibleComments();
+      // 初回更新を遅延実行
+      setTimeout(() => {
+        updateVisibleComments();
+      }, 100);
       
       return () => {
         timeScale.unsubscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange);
@@ -308,15 +344,16 @@ const Chart = ({ data, comments, onPriceUpdate, onCandleClick }) => {
   return (
     <div className="chart-container">
       <div className="chart-instructions">
-        💡 PC: ローソク足をクリック | モバイル: ローソク足を長押しでコメント投稿
+        💡 チャート上の任意の価格をクリック（モバイル: 長押し）でコメント投稿
       </div>
-      <div ref={chartContainerRef} className="chart" style={{ cursor: 'crosshair' }} />
+      <div ref={chartContainerRef} className="chart" style={{ cursor: 'crosshair', position: 'relative' }} />
       <div className="comment-overlay">
         {visibleComments.map((group, index) => (
           <CommentBubble
-            key={`comment-group-${index}`}
+            key={`comment-group-${index}-${group.timestamp}`}
             group={group}
             chart={chartRef.current}
+            chartContainer={chartContainerRef.current}
           />
         ))}
       </div>

@@ -223,7 +223,7 @@ function App() {
   }, [timeFrame]);
 
   const handleCandleClick = useCallback((candleData) => {
-    console.log('Candle clicked:', candleData);
+    console.log('Candle clicked with price:', candleData.price);
     setSelectedCandle(candleData);
     setShowPostModal(true);
   }, []);
@@ -235,7 +235,7 @@ function App() {
       wsService.send({
         type: 'post_comment',
         timestamp: selectedCandle.time,  // ローソク足の時間を送信
-        price: selectedCandle.close,      // ローソク足の終値を送信
+        price: selectedCandle.price,      // 選択した価格を送信
         content: content,
         emotion_icon: emotionIcon
       });
@@ -245,17 +245,6 @@ function App() {
     
     setShowPostModal(false);
     setSelectedCandle(null);
-  };
-
-  const formatCandleTime = (timestamp) => {
-    const date = new Date(timestamp * 1000);
-    const options = {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    };
-    return date.toLocaleString('ja-JP', options);
   };
 
   return (
@@ -296,14 +285,7 @@ function App() {
             setSelectedCandle(null);
           }}
           onSubmit={handlePostComment}
-          currentPrice={selectedCandle.close}
-          candleInfo={{
-            time: formatCandleTime(selectedCandle.time),
-            open: selectedCandle.open,
-            high: selectedCandle.high,
-            low: selectedCandle.low,
-            close: selectedCandle.close
-          }}
+          currentPrice={selectedCandle.price}
         />
       )}
     </div>
