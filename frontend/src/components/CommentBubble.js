@@ -2,11 +2,14 @@ import React, { useEffect, useState } from 'react';
 
 const CommentBubble = ({ group, chart, chartContainer }) => {
   const [position, setPosition] = useState({ x: 0, y: 0 });
-  const [isVisible, setIsVisible] = useState(false);
+  const [isVisible, setIsVisible] = useState(true); // デフォルトで表示
   const [showDetails, setShowDetails] = useState(false);
 
   useEffect(() => {
-    if (!chart || !chartContainer) return;
+    if (!chart || !chartContainer) {
+      console.log('Chart or container not ready');
+      return;
+    }
 
     const updatePosition = () => {
       try {
@@ -18,35 +21,59 @@ const CommentBubble = ({ group, chart, chartContainer }) => {
         const x = timeScale.timeToCoordinate(timestamp);
         const y = priceScale.priceToCoordinate(group.price);
         
-        if (x !== null && y !== null && x >= 0 && y >= 0) {
-          // チャート内の相対位置を計算
-          const relativeX = x;
-          const relativeY = y;
-          
-          setPosition({ x: relativeX, y: relativeY });
+        // デバッグログ
+        console.log(`Comment position - timestamp: ${timestamp}, price: ${group.price}, x: ${x}, y: ${y}`);
+        
+        if (x !== null && y !== null) {
+          setPosition({ x: x || 0, y: y || 0 });
           setIsVisible(true);
         } else {
-          setIsVisible(false);
+          // 座標が取得できない場合でも、とりあえず表示
+          console.log('Could not get coordinates, using defaults');
+          // チャートの中央付近に配置
+          const containerWidth = chartContainer.clientWidth;
+          const containerHeight = chartContainer.clientHeight;
+          setPosition({ 
+            x: containerWidth * 0.8, // 右寄りに配置
+            y: containerHeight * 0.5  // 中央の高さ
+          });
+          setIsVisible(true);
         }
       } catch (error) {
         console.error('Error updating comment position:', error);
-        setIsVisible(false);
+        // エラー時でも表示を試みる
+        setIsVisible(true);
+        setPosition({ x: 100, y: 100 }); // デフォルト位置
       }
     };
 
+    // 初回更新
     updatePosition();
     
     // チャートの更新を監視
     const timeScale = chart.timeScale();
     const handleVisibleTimeRangeChange = () => updatePosition();
     
-    timeScale.subscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange);
+    try {
+      timeScale.subscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange);
+    } catch (error) {
+      console.error('Error subscribing to time range change:', error);
+    }
     
     // Crosshairの移動も監視
     const handleCrosshairMove = () => updatePosition();
-    chart.subscribeCrosshairMove(handleCrosshairMove);
+    
+    try {
+      chart.subscribeCrosshairMove(handleCrosshairMove);
+    } catch (error) {
+      console.error('Error subscribing to crosshair move:', error);
+    }
+    
+    // 定期的に位置を更新（フォールバック）
+    const intervalId = setInterval(updatePosition, 1000);
     
     return () => {
+      clearInterval(intervalId);
       try {
         timeScale.unsubscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange);
         chart.unsubscribeCrosshairMove(handleCrosshairMove);
@@ -56,7 +83,10 @@ const CommentBubble = ({ group, chart, chartContainer }) => {
     };
   }, [group, chart, chartContainer]);
 
-  if (!isVisible) return null;
+  if (!isVisible) {
+    console.log('Comment bubble not visible');
+    return null;
+  }
 
   // 単一のコメント
   if (group.comments.length === 1) {
@@ -70,10 +100,12 @@ const CommentBubble = ({ group, chart, chartContainer }) => {
       <div 
         className="comment-bubble comment-bubble-single"
         style={{ 
+          position: 'absolute',
           left: `${position.x + offsetX}px`, 
           top: `${position.y + offsetY}px`,
           transform: 'none',
-          zIndex: 100 + (comment.id % 10)
+          zIndex: 100 + (comment.id % 10),
+          pointerEvents: 'auto'
         }}
         onClick={() => setShowDetails(!showDetails)}
       >
@@ -93,10 +125,12 @@ const CommentBubble = ({ group, chart, chartContainer }) => {
       <div 
         className="comment-bubble comment-bubble-aggregated"
         style={{ 
+          position: 'absolute',
           left: `${position.x}px`, 
           top: `${position.y}px`,
           transform: 'translate(-50%, -50%)',
-          zIndex: 200
+          zIndex: 200,
+          pointerEvents: 'auto'
         }}
         onClick={() => setShowDetails(!showDetails)}
       >
@@ -107,10 +141,10 @@ const CommentBubble = ({ group, chart, chartContainer }) => {
         <div 
           className="comment-details"
           style={{ 
+            position: 'absolute',
             left: `${position.x}px`, 
             top: `${position.y + 30}px`,
             transform: 'translateX(-50%)',
-            position: 'absolute',
             background: 'white',
             borderRadius: '1rem',
             padding: '0.75rem',
@@ -118,7 +152,8 @@ const CommentBubble = ({ group, chart, chartContainer }) => {
             zIndex: 300,
             maxWidth: '250px',
             maxHeight: '200px',
-            overflowY: 'auto'
+            overflowY: 'auto',
+            pointerEvents: 'auto'
           }}
         >
           {group.comments.map((comment, idx) => (
