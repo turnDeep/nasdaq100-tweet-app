@@ -69,29 +69,6 @@ const PostModal = ({ onClose, onSubmit, candleData }) => {
             />
           </div>
           
-          {candleData && (
-            <div className="candle-info">
-              <div className="candle-info-prices">
-                <div className="price-item">
-                  <span className="price-label">始値:</span>
-                  <span className="price-value">${candleData.open?.toFixed(2)}</span>
-                </div>
-                <div className="price-item">
-                  <span className="price-label">高値:</span>
-                  <span className="price-value high">${candleData.high?.toFixed(2)}</span>
-                </div>
-                <div className="price-item">
-                  <span className="price-label">安値:</span>
-                  <span className="price-value low">${candleData.low?.toFixed(2)}</span>
-                </div>
-                <div className="price-item">
-                  <span className="price-label">終値:</span>
-                  <span className="price-value close">${candleData.close?.toFixed(2)}</span>
-                </div>
-              </div>
-            </div>
-          )}
-          
           <textarea
             className="comment-input"
             placeholder="このポイントについてコメントを入力..."
