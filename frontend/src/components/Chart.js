@@ -9,12 +9,12 @@ const Chart = ({ data, comments, onCandleClick }) => {
   const [visibleComments, setVisibleComments] = useState([]);
   const clickTimeoutRef = useRef(null);
 
-  const aggregateComments = useCallback((comments) => {
+  const aggregateComments = useCallback((commentsToAggregate) => {
     // 近接するコメントを集約（価格差を20に増やして集約を減らす）
     const priceThreshold = 20;
     const aggregated = [];
     
-    comments.forEach(comment => {
+    commentsToAggregate.forEach(comment => {
       const nearby = aggregated.find(group => {
         return Math.abs(group.price - comment.price) < priceThreshold;
       });
@@ -30,17 +30,25 @@ const Chart = ({ data, comments, onCandleClick }) => {
       }
     });
     
+    console.log(`Aggregated ${commentsToAggregate.length} comments into ${aggregated.length} groups`);
     return aggregated;
   }, []);
 
   const updateVisibleComments = useCallback(() => {
     const chart = chartRef.current;
-    if (!chart) return;
+    if (!chart || !comments || comments.length === 0) {
+      console.log('No chart or comments to display');
+      setVisibleComments([]);
+      return;
+    }
 
     try {
       const visibleRange = chart.timeScale().getVisibleRange();
+      console.log('Visible range:', visibleRange);
+      
       if (!visibleRange) {
         // 可視範囲が取得できない場合は全コメントを表示
+        console.log('No visible range, showing all comments');
         const aggregated = aggregateComments(comments);
         setVisibleComments(aggregated);
         return;
@@ -51,6 +59,7 @@ const Chart = ({ data, comments, onCandleClick }) => {
         return timestamp >= visibleRange.from && timestamp <= visibleRange.to;
       });
 
+      console.log(`Filtered ${filtered.length} comments in visible range`);
       const aggregated = aggregateComments(filtered);
       setVisibleComments(aggregated);
     } catch (error) {
@@ -68,7 +77,7 @@ const Chart = ({ data, comments, onCandleClick }) => {
       return;
     }
 
-    // seriesPricesからローソク足データを取得
+    // seriesRefからローソク足データを取得
     const candleSeries = seriesRef.current;
     if (!candleSeries) {
       console.log('No candle series');
@@ -80,17 +89,23 @@ const Chart = ({ data, comments, onCandleClick }) => {
     if (priceData) {
       console.log('クリックされたローソク足のデータ:', priceData);
       
-      // チャートAPIから価格スケールを取得
-      const priceScale = chartRef.current.priceScale('right');
-      
-      // Y座標から価格を計算
+      // Y座標から価格を計算（seriesのcoordinateToPriceメソッドを使用）
       let clickedPrice;
-      if (param.point.y !== undefined && priceScale) {
-        // Y座標から価格を取得（lightweight-chartsの新しい方法）
-        clickedPrice = priceScale.coordinateToPrice(param.point.y);
-        
-        // もしcoordinateToPriceが機能しない場合は、ローソク足の範囲で計算
-        if (clickedPrice === null || clickedPrice === undefined) {
+      if (param.point.y !== undefined) {
+        try {
+          // シリーズAPIのcoordinateToPriceメソッドを使用
+          clickedPrice = candleSeries.coordinateToPrice(param.point.y);
+          
+          // もしnullやundefinedが返された場合は、ローソク足の範囲で計算
+          if (clickedPrice === null || clickedPrice === undefined) {
+            const chartHeight = chartContainerRef.current?.clientHeight || 500;
+            const yRatio = param.point.y / chartHeight;
+            const priceRange = priceData.high - priceData.low;
+            clickedPrice = priceData.high - (priceRange * yRatio);
+          }
+        } catch (error) {
+          console.error('Error getting price from coordinate:', error);
+          // エラーの場合はフォールバック
           const chartHeight = chartContainerRef.current?.clientHeight || 500;
           const yRatio = param.point.y / chartHeight;
           const priceRange = priceData.high - priceData.low;
@@ -101,8 +116,12 @@ const Chart = ({ data, comments, onCandleClick }) => {
         clickedPrice = priceData.close;
       }
       
-      // ローソク足の範囲内に制限
-      clickedPrice = Math.max(priceData.low, Math.min(priceData.high, clickedPrice));
+      // ローソク足の範囲内に制限（ヒゲの範囲まで含める）
+      // 制限を緩和して、ローソク足の上下に少し余裕を持たせる
+      const margin = (priceData.high - priceData.low) * 0.1; // 10%のマージン
+      const minPrice = priceData.low - margin;
+      const maxPrice = priceData.high + margin;
+      clickedPrice = Math.max(minPrice, Math.min(maxPrice, clickedPrice));
       
       console.log('計算された価格:', clickedPrice);
       
@@ -136,11 +155,15 @@ const Chart = ({ data, comments, onCandleClick }) => {
 
       if (closestCandle && onCandleClick) {
         // Y座標から価格を推定
-        const priceScale = chartRef.current.priceScale('right');
         let clickedPrice;
         
-        if (param.point.y !== undefined && priceScale) {
-          clickedPrice = priceScale.coordinateToPrice(param.point.y);
+        if (param.point.y !== undefined && candleSeries) {
+          try {
+            clickedPrice = candleSeries.coordinateToPrice(param.point.y);
+          } catch (error) {
+            console.error('Error getting price from coordinate:', error);
+            clickedPrice = null;
+          }
           
           if (clickedPrice === null || clickedPrice === undefined) {
             const chartHeight = chartContainerRef.current?.clientHeight || 500;
@@ -152,7 +175,9 @@ const Chart = ({ data, comments, onCandleClick }) => {
           clickedPrice = closestCandle.close;
         }
         
-        const constrainedPrice = Math.max(closestCandle.low, Math.min(closestCandle.high, clickedPrice));
+        // マージンを追加
+        const margin = (closestCandle.high - closestCandle.low) * 0.1;
+        const constrainedPrice = Math.max(closestCandle.low - margin, Math.min(closestCandle.high + margin, clickedPrice));
         
         onCandleClick({
           time: closestCandle.time,
@@ -177,10 +202,10 @@ const Chart = ({ data, comments, onCandleClick }) => {
     const y = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
     
     const timeScale = chartRef.current.timeScale();
-    const priceScale = chartRef.current.priceScale('right');
+    const candleSeries = seriesRef.current;
     const time = timeScale.coordinateToTime(x);
     
-    if (time) {
+    if (time && candleSeries) {
       // 最も近いローソク足を探す
       let closestCandle = null;
       let minTimeDiff = Infinity;
@@ -196,22 +221,23 @@ const Chart = ({ data, comments, onCandleClick }) => {
       if (closestCandle && onCandleClick) {
         // Y座標から価格を計算
         let clickedPrice;
-        if (priceScale) {
-          clickedPrice = priceScale.coordinateToPrice(y);
-          if (clickedPrice === null || clickedPrice === undefined) {
-            const chartHeight = chartContainerRef.current.clientHeight;
-            const yRatio = y / chartHeight;
-            const priceRange = closestCandle.high - closestCandle.low;
-            clickedPrice = closestCandle.high - (priceRange * yRatio);
-          }
-        } else {
+        try {
+          clickedPrice = candleSeries.coordinateToPrice(y);
+        } catch (error) {
+          console.error('Error getting price from coordinate:', error);
+          clickedPrice = null;
+        }
+        
+        if (clickedPrice === null || clickedPrice === undefined) {
           const chartHeight = chartContainerRef.current.clientHeight;
           const yRatio = y / chartHeight;
           const priceRange = closestCandle.high - closestCandle.low;
           clickedPrice = closestCandle.high - (priceRange * yRatio);
         }
         
-        const constrainedPrice = Math.max(closestCandle.low, Math.min(closestCandle.high, clickedPrice));
+        // マージンを追加
+        const margin = (closestCandle.high - closestCandle.low) * 0.1;
+        const constrainedPrice = Math.max(closestCandle.low - margin, Math.min(closestCandle.high + margin, clickedPrice));
         
         onCandleClick({
           time: closestCandle.time,
@@ -271,7 +297,16 @@ const Chart = ({ data, comments, onCandleClick }) => {
         secondsVisible: false,
       },
       crosshair: {
-        mode: 1, // Magnet mode
+        mode: 0, // Normal mode (マグネットモード無効)
+        vertLine: {
+          width: 1,
+          color: '#758696',
+          style: 1,
+        },
+        horzLine: {
+          visible: true,
+          labelVisible: true,
+        },
       },
     });
 
@@ -334,6 +369,8 @@ const Chart = ({ data, comments, onCandleClick }) => {
 
   useEffect(() => {
     // コメントの表示を更新
+    console.log(`Chart received ${comments.length} comments`);
+    
     if (chartRef.current) {
       const handleVisibleTimeRangeChange = () => {
         updateVisibleComments();
