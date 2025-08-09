@@ -10,8 +10,8 @@ const Chart = ({ data, comments, onCandleClick }) => {
   const clickTimeoutRef = useRef(null);
 
   const aggregateComments = useCallback((commentsToAggregate) => {
-    // 近接するコメントを集約（価格差を20に増やして集約を減らす）
-    const priceThreshold = 20;
+    // 近接するコメントを集約（価格差を50に増やして集約を大幅に減らす）
+    const priceThreshold = 50;
     const aggregated = [];
     
     commentsToAggregate.forEach(comment => {
@@ -43,30 +43,13 @@ const Chart = ({ data, comments, onCandleClick }) => {
     }
 
     try {
-      const visibleRange = chart.timeScale().getVisibleRange();
-      console.log('Visible range:', visibleRange);
-      
-      if (!visibleRange) {
-        // 可視範囲が取得できない場合は全コメントを表示
-        console.log('No visible range, showing all comments');
-        const aggregated = aggregateComments(comments);
-        setVisibleComments(aggregated);
-        return;
-      }
-
-      const filtered = comments.filter(comment => {
-        const timestamp = new Date(comment.timestamp).getTime() / 1000;
-        return timestamp >= visibleRange.from && timestamp <= visibleRange.to;
-      });
-
-      console.log(`Filtered ${filtered.length} comments in visible range`);
-      const aggregated = aggregateComments(filtered);
+      // 常にすべてのコメントを表示（フィルタリングしない）
+      console.log(`Showing all ${comments.length} comments`);
+      const aggregated = aggregateComments(comments);
       setVisibleComments(aggregated);
     } catch (error) {
       console.error('Error updating visible comments:', error);
-      // エラー時は全コメントを表示
-      const aggregated = aggregateComments(comments);
-      setVisibleComments(aggregated);
+      setVisibleComments([]);
     }
   }, [comments, aggregateComments]);
 
@@ -370,24 +353,7 @@ const Chart = ({ data, comments, onCandleClick }) => {
   useEffect(() => {
     // コメントの表示を更新
     console.log(`Chart received ${comments.length} comments`);
-    
-    if (chartRef.current) {
-      const handleVisibleTimeRangeChange = () => {
-        updateVisibleComments();
-      };
-      
-      const timeScale = chartRef.current.timeScale();
-      timeScale.subscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange);
-      
-      // 初回更新を遅延実行
-      setTimeout(() => {
-        updateVisibleComments();
-      }, 100);
-      
-      return () => {
-        timeScale.unsubscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange);
-      };
-    }
+    updateVisibleComments();
   }, [comments, updateVisibleComments]);
 
   return (
@@ -399,7 +365,7 @@ const Chart = ({ data, comments, onCandleClick }) => {
       <div className="comment-overlay">
         {visibleComments.map((group, index) => (
           <CommentBubble
-            key={`comment-group-${index}-${group.timestamp}`}
+            key={`comment-group-${group.comments[0]?.id || index}-${group.timestamp}`}
             group={group}
             chart={chartRef.current}
             chartContainer={chartContainerRef.current}
