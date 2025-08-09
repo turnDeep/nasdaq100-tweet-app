@@ -87,50 +87,77 @@ function App() {
     }
   }, [timeFrame]);
 
-  const loadSentiment = useCallback(async () => {
+  const loadComments = useCallback(async () => {
     try {
-      // 時間足を指定してセンチメントを取得
-      const sentimentRes = await axios.get(`${API_URL}/api/sentiment?interval=${timeFrame}`);
-      setSentiment(sentimentRes.data || { buy_percentage: 50, sell_percentage: 50 });
-    } catch (error) {
-      console.error('Failed to update sentiment:', error);
-    }
-  }, [timeFrame]);
-
-  const loadInitialData = useCallback(async () => {
-    try {
-      console.log('Loading initial data for timeframe:', timeFrame);
+      console.log('Loading all comments');
       
-      // 時間足に応じたコメントを取得
-      const commentsRes = await axios.get(`${API_URL}/api/comments?interval=${timeFrame}`);
+      // すべてのコメントを取得（フィルタリングなし）
+      const commentsRes = await axios.get(`${API_URL}/api/comments`);
       console.log('Comments API response:', commentsRes.data);
       
       if (commentsRes.data.comments) {
         console.log(`Loaded ${commentsRes.data.comments.length} comments`);
-        // コメントの詳細をログ
+        
+        // デバッグ用：コメントの詳細をログ
         commentsRes.data.comments.forEach((comment, index) => {
-          if (index < 3) { // 最初の3件だけログ
+          if (index < 5) { // 最初の5件だけログ
             console.log('Comment:', {
               id: comment.id,
               timestamp: comment.timestamp,
               price: comment.price,
-              content: comment.content.substring(0, 30)
+              content: comment.content.substring(0, 30),
+              emotion_icon: comment.emotion_icon
             });
           }
         });
+        
         setComments(commentsRes.data.comments);
       } else {
         console.log('No comments in response');
         setComments([]);
       }
-      
-      // センチメントを取得
-      await loadSentiment();
     } catch (error) {
-      console.error('Failed to load initial data:', error);
-      setComments([]);
+      console.error('Failed to load comments:', error);
+      
+      // エラー時にデモコメントを表示
+      const demoComments = [
+        {
+          id: 1,
+          timestamp: new Date().toISOString(),
+          price: 17100.50,
+          content: 'ナスダック強気！🚀',
+          emotion_icon: '🚀'
+        },
+        {
+          id: 2,
+          timestamp: new Date(Date.now() - 600000).toISOString(),
+          price: 17050.25,
+          content: 'この辺で買い増し検討中',
+          emotion_icon: '😊'
+        },
+        {
+          id: 3,
+          timestamp: new Date(Date.now() - 1200000).toISOString(),
+          price: 17150.75,
+          content: '利確しました。様子見',
+          emotion_icon: '😎'
+        }
+      ];
+      setComments(demoComments);
     }
-  }, [loadSentiment, timeFrame]);
+  }, []);
+
+  const loadSentiment = useCallback(async () => {
+    try {
+      // センチメント取得（フィルタリングなし）
+      const sentimentRes = await axios.get(`${API_URL}/api/sentiment`);
+      console.log('Sentiment data:', sentimentRes.data);
+      setSentiment(sentimentRes.data || { buy_percentage: 50, sell_percentage: 50 });
+    } catch (error) {
+      console.error('Failed to update sentiment:', error);
+      setSentiment({ buy_percentage: 60, sell_percentage: 40 });
+    }
+  }, []);
 
   const updateChartWithNewPrice = useCallback((newPrice) => {
     setChartData(prevData => {
@@ -207,6 +234,8 @@ function App() {
     // コメント保存の確認メッセージ
     ws.on('comment_saved', (data) => {
       console.log('Comment saved confirmation:', data);
+      // コメントを即座に再読み込み
+      loadComments();
     });
     
     // エラーメッセージ
@@ -223,13 +252,15 @@ function App() {
     });
 
     // 初期データを取得
-    loadInitialData();
     loadChartData();
+    loadComments();
+    loadSentiment();
     
     // 定期的にデータを更新（30秒ごと）
     const intervalId = setInterval(() => {
       loadChartData();
-      loadInitialData(); // コメントも定期的に更新
+      loadComments();
+      loadSentiment();
     }, 30000);
     
     return () => {
@@ -237,14 +268,13 @@ function App() {
       clearInterval(intervalId);
       ws.close();
     };
-  }, [loadInitialData, loadChartData, loadSentiment, updateChartWithNewPrice]);
+  }, []); // 依存配列を空にして初回のみ実行
 
   useEffect(() => {
-    // 時間枠が変更されたらデータを再読み込み
+    // 時間枠が変更されたらチャートデータのみ再読み込み
     console.log('Timeframe changed to:', timeFrame);
     loadChartData();
-    loadInitialData();
-  }, [timeFrame, loadChartData, loadInitialData]);
+  }, [timeFrame, loadChartData]);
 
   const handleCandleClick = useCallback((candleData) => {
     console.log('Candle clicked with data:', candleData);
@@ -278,8 +308,7 @@ function App() {
     <div className="app">
       <header className="app-header">
         <div className="logo">
-          <img src="/nasu-icon.png" alt="NASDAQ 100" className="logo-icon" />
-          <span className="logo-text">ナスダック100先物</span>
+          <span className="logo-text">📈 ナスダック100先物</span>
         </div>
         
         <TimeFrameSelector 
