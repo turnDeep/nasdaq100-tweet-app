@@ -2,13 +2,12 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createChart } from 'lightweight-charts';
 import CommentBubble from './CommentBubble';
 
-const Chart = ({ data, comments, onPriceUpdate, onCandleClick }) => {
+const Chart = ({ data, comments, onCandleClick }) => {
   const chartContainerRef = useRef();
   const chartRef = useRef();
   const seriesRef = useRef();
   const [visibleComments, setVisibleComments] = useState([]);
   const clickTimeoutRef = useRef(null);
-  const lastClickRef = useRef(null);
 
   const aggregateComments = useCallback((comments) => {
     // 近接するコメントを集約（価格差を20に増やして集約を減らす）
@@ -76,29 +75,38 @@ const Chart = ({ data, comments, onPriceUpdate, onCandleClick }) => {
       return;
     }
 
-    const priceData = param.seriesPrices?.get(candleSeries);
+    const priceData = param.seriesData?.get(candleSeries);
     
     if (priceData) {
       console.log('クリックされたローソク足のデータ:', priceData);
       
-      // Y座標から価格を推定（高値と安値の間で線形補間）
-      // param.pointは画面上の座標、priceDataには該当するローソク足の価格情報
-      let clickedPrice = priceData.close; // デフォルトは終値
+      // チャートAPIから価格スケールを取得
+      const priceScale = chartRef.current.priceScale('right');
       
-      // チャートの高さを取得
-      const chartHeight = chartContainerRef.current?.clientHeight || 500;
-      const yRatio = param.point.y / chartHeight; // 0（上）から1（下）の比率
-      
-      // 高値から安値の間で線形補間（上が高値、下が安値）
-      const priceRange = priceData.high - priceData.low;
-      clickedPrice = priceData.high - (priceRange * yRatio);
+      // Y座標から価格を計算
+      let clickedPrice;
+      if (param.point.y !== undefined && priceScale) {
+        // Y座標から価格を取得（lightweight-chartsの新しい方法）
+        clickedPrice = priceScale.coordinateToPrice(param.point.y);
+        
+        // もしcoordinateToPriceが機能しない場合は、ローソク足の範囲で計算
+        if (clickedPrice === null || clickedPrice === undefined) {
+          const chartHeight = chartContainerRef.current?.clientHeight || 500;
+          const yRatio = param.point.y / chartHeight;
+          const priceRange = priceData.high - priceData.low;
+          clickedPrice = priceData.high - (priceRange * yRatio);
+        }
+      } else {
+        // フォールバック：終値を使用
+        clickedPrice = priceData.close;
+      }
       
       // ローソク足の範囲内に制限
       clickedPrice = Math.max(priceData.low, Math.min(priceData.high, clickedPrice));
       
       console.log('計算された価格:', clickedPrice);
       
-      // onCandleClickを呼び出す
+      // onCandleClickを呼び出す（時間も含めて渡す）
       if (onCandleClick) {
         onCandleClick({
           time: param.time,
@@ -128,10 +136,22 @@ const Chart = ({ data, comments, onPriceUpdate, onCandleClick }) => {
 
       if (closestCandle && onCandleClick) {
         // Y座標から価格を推定
-        const chartHeight = chartContainerRef.current?.clientHeight || 500;
-        const yRatio = param.point.y / chartHeight;
-        const priceRange = closestCandle.high - closestCandle.low;
-        const clickedPrice = closestCandle.high - (priceRange * yRatio);
+        const priceScale = chartRef.current.priceScale('right');
+        let clickedPrice;
+        
+        if (param.point.y !== undefined && priceScale) {
+          clickedPrice = priceScale.coordinateToPrice(param.point.y);
+          
+          if (clickedPrice === null || clickedPrice === undefined) {
+            const chartHeight = chartContainerRef.current?.clientHeight || 500;
+            const yRatio = param.point.y / chartHeight;
+            const priceRange = closestCandle.high - closestCandle.low;
+            clickedPrice = closestCandle.high - (priceRange * yRatio);
+          }
+        } else {
+          clickedPrice = closestCandle.close;
+        }
+        
         const constrainedPrice = Math.max(closestCandle.low, Math.min(closestCandle.high, clickedPrice));
         
         onCandleClick({
@@ -157,6 +177,7 @@ const Chart = ({ data, comments, onPriceUpdate, onCandleClick }) => {
     const y = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
     
     const timeScale = chartRef.current.timeScale();
+    const priceScale = chartRef.current.priceScale('right');
     const time = timeScale.coordinateToTime(x);
     
     if (time) {
@@ -173,11 +194,23 @@ const Chart = ({ data, comments, onPriceUpdate, onCandleClick }) => {
       });
 
       if (closestCandle && onCandleClick) {
-        // Y座標から価格を推定
-        const chartHeight = chartContainerRef.current.clientHeight;
-        const yRatio = y / chartHeight;
-        const priceRange = closestCandle.high - closestCandle.low;
-        const clickedPrice = closestCandle.high - (priceRange * yRatio);
+        // Y座標から価格を計算
+        let clickedPrice;
+        if (priceScale) {
+          clickedPrice = priceScale.coordinateToPrice(y);
+          if (clickedPrice === null || clickedPrice === undefined) {
+            const chartHeight = chartContainerRef.current.clientHeight;
+            const yRatio = y / chartHeight;
+            const priceRange = closestCandle.high - closestCandle.low;
+            clickedPrice = closestCandle.high - (priceRange * yRatio);
+          }
+        } else {
+          const chartHeight = chartContainerRef.current.clientHeight;
+          const yRatio = y / chartHeight;
+          const priceRange = closestCandle.high - closestCandle.low;
+          clickedPrice = closestCandle.high - (priceRange * yRatio);
+        }
+        
         const constrainedPrice = Math.max(closestCandle.low, Math.min(closestCandle.high, clickedPrice));
         
         onCandleClick({
@@ -201,20 +234,13 @@ const Chart = ({ data, comments, onPriceUpdate, onCandleClick }) => {
         handleLongPress(e);
       }, 500);
     }
-    
-    lastClickRef.current = Date.now();
   }, [handleLongPress]);
 
-  const handlePointerUp = useCallback((e) => {
-    const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-    
+  const handlePointerUp = useCallback(() => {
     if (clickTimeoutRef.current) {
       clearTimeout(clickTimeoutRef.current);
       clickTimeoutRef.current = null;
     }
-    
-    // PCの場合は通常のクリックとして処理（subscribeClickで処理されるので不要）
-    // モバイルの場合は長押しで処理
   }, []);
 
   useEffect(() => {
@@ -279,20 +305,6 @@ const Chart = ({ data, comments, onPriceUpdate, onCandleClick }) => {
     };
     window.addEventListener('resize', handleResize);
 
-    // 価格更新の監視
-    chart.subscribeCrosshairMove((param) => {
-      if (!param || !param.seriesPrices || !candlestickSeries) return;
-      
-      try {
-        const price = param.seriesPrices.get(candlestickSeries);
-        if (price && price.close) {
-          onPriceUpdate(price.close);
-        }
-      } catch (error) {
-        console.error('Error in crosshair move:', error);
-      }
-    });
-
     return () => {
       container.removeEventListener('pointerdown', handlePointerDown);
       container.removeEventListener('pointerup', handlePointerUp);
@@ -301,7 +313,7 @@ const Chart = ({ data, comments, onPriceUpdate, onCandleClick }) => {
       chart.unsubscribeClick(handleChartClick);
       chart.remove();
     };
-  }, [onPriceUpdate, handleChartClick, handlePointerDown, handlePointerUp]);
+  }, [handleChartClick, handlePointerDown, handlePointerUp]);
 
   useEffect(() => {
     // データを更新
