@@ -64,16 +64,15 @@ function App() {
   const loadChartData = useCallback(async () => {
     try {
       console.log('Loading chart data for timeframe:', timeFrame);
-      console.log('API URL:', `${API_URL}/api/market/^NDX/${timeFrame}`);
       
       const res = await axios.get(`${API_URL}/api/market/^NDX/${timeFrame}`, {
-        timeout: 5000,
+        timeout: 10000,
         headers: {
           'Content-Type': 'application/json',
         }
       });
       
-      console.log('API Response:', res);
+      console.log('Chart data loaded:', res.data);
       
       if (res.data.data && res.data.data.length > 0) {
         setChartData(res.data.data);
@@ -81,12 +80,6 @@ function App() {
       setConnectionError(false);
     } catch (error) {
       console.error('Failed to load chart data:', error);
-      console.error('Error details:', {
-        message: error.message,
-        code: error.code,
-        response: error.response,
-        config: error.config
-      });
       setConnectionError(true);
       // デモデータを設定
       const demoData = generateDemoData(timeFrame);
@@ -106,17 +99,36 @@ function App() {
 
   const loadInitialData = useCallback(async () => {
     try {
-      console.log('Loading initial data...');
+      console.log('Loading initial data for timeframe:', timeFrame);
       
       // 時間足に応じたコメントを取得
       const commentsRes = await axios.get(`${API_URL}/api/comments?interval=${timeFrame}`);
-      console.log('Comments loaded:', commentsRes.data.comments?.length || 0);
-      setComments(commentsRes.data.comments || []);
+      console.log('Comments API response:', commentsRes.data);
+      
+      if (commentsRes.data.comments) {
+        console.log(`Loaded ${commentsRes.data.comments.length} comments`);
+        // コメントの詳細をログ
+        commentsRes.data.comments.forEach((comment, index) => {
+          if (index < 3) { // 最初の3件だけログ
+            console.log('Comment:', {
+              id: comment.id,
+              timestamp: comment.timestamp,
+              price: comment.price,
+              content: comment.content.substring(0, 30)
+            });
+          }
+        });
+        setComments(commentsRes.data.comments);
+      } else {
+        console.log('No comments in response');
+        setComments([]);
+      }
       
       // センチメントを取得
       await loadSentiment();
     } catch (error) {
       console.error('Failed to load initial data:', error);
+      setComments([]);
     }
   }, [loadSentiment, timeFrame]);
 
@@ -173,11 +185,18 @@ function App() {
     const ws = new WebSocketService(`${wsUrl}/ws`);
     setWsService(ws);
     
+    // 新しいコメントを受信
     ws.on('new_comment', (data) => {
-      console.log('New comment received:', data);
+      console.log('New comment received via WebSocket:', data);
       setComments(prev => {
+        // 重複を避ける
+        const exists = prev.find(c => c.id === data.id);
+        if (exists) {
+          console.log('Comment already exists, skipping');
+          return prev;
+        }
         const newComments = [...prev, data];
-        console.log('Total comments:', newComments.length);
+        console.log('Total comments after adding new:', newComments.length);
         return newComments;
       });
       
@@ -185,10 +204,20 @@ function App() {
       loadSentiment();
     });
     
+    // コメント保存の確認メッセージ
+    ws.on('comment_saved', (data) => {
+      console.log('Comment saved confirmation:', data);
+    });
+    
+    // エラーメッセージ
+    ws.on('error', (data) => {
+      console.error('WebSocket error:', data);
+    });
+    
+    // マーケット更新
     ws.on('market_update', (data) => {
       console.log('Market update received:', data);
       if (data && data.price) {
-        // チャートデータに新しいポイントを追加
         updateChartWithNewPrice(data.price);
       }
     });
@@ -197,9 +226,10 @@ function App() {
     loadInitialData();
     loadChartData();
     
-    // 定期的にチャートデータを更新（30秒ごと）
+    // 定期的にデータを更新（30秒ごと）
     const intervalId = setInterval(() => {
       loadChartData();
+      loadInitialData(); // コメントも定期的に更新
     }, 30000);
     
     return () => {
@@ -211,6 +241,7 @@ function App() {
 
   useEffect(() => {
     // 時間枠が変更されたらデータを再読み込み
+    console.log('Timeframe changed to:', timeFrame);
     loadChartData();
     loadInitialData();
   }, [timeFrame, loadChartData, loadInitialData]);
@@ -222,16 +253,19 @@ function App() {
   }, []);
 
   const handlePostComment = async (content, emotionIcon, customPrice) => {
-    console.log('Posting comment:', content, emotionIcon, customPrice);
+    console.log('Posting comment:', { content, emotionIcon, customPrice });
     
     if (wsService && selectedCandle) {
-      wsService.send({
+      const message = {
         type: 'post_comment',
         timestamp: selectedCandle.time,  // ローソク足の時間を送信
         price: customPrice || selectedCandle.price,  // カスタム価格または選択した価格
         content: content,
         emotion_icon: emotionIcon
-      });
+      };
+      
+      console.log('Sending WebSocket message:', message);
+      wsService.send(message);
     } else {
       console.error('WebSocket service not initialized or candle not selected');
     }
