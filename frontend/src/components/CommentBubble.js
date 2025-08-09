@@ -2,12 +2,12 @@ import React, { useEffect, useState } from 'react';
 
 const CommentBubble = ({ group, chart, chartContainer }) => {
   const [position, setPosition] = useState({ x: 0, y: 0 });
-  const [isVisible, setIsVisible] = useState(true); // デフォルトで表示
+  const [isVisible, setIsVisible] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
 
   useEffect(() => {
-    if (!chart || !chartContainer) {
-      console.log('Chart or container not ready');
+    if (!chart || !chartContainer || !group) {
+      console.log('CommentBubble: Chart, container or group not ready');
       return;
     }
 
@@ -16,34 +16,77 @@ const CommentBubble = ({ group, chart, chartContainer }) => {
         const timeScale = chart.timeScale();
         const priceScale = chart.priceScale('right');
         
-        // タイムスタンプを正しく変換
-        const timestamp = new Date(group.timestamp).getTime() / 1000;
+        // タイムスタンプの処理 - 様々な形式に対応
+        let timestamp;
+        
+        // groupのタイムスタンプを確認
+        console.log('CommentBubble: Processing timestamp:', group.timestamp, 'Type:', typeof group.timestamp);
+        
+        if (typeof group.timestamp === 'number') {
+          // 数値の場合
+          if (group.timestamp > 1000000000000) {
+            // ミリ秒の場合は秒に変換
+            timestamp = Math.floor(group.timestamp / 1000);
+          } else {
+            // すでに秒単位
+            timestamp = group.timestamp;
+          }
+        } else if (typeof group.timestamp === 'string') {
+          // 文字列の場合
+          const parsed = Date.parse(group.timestamp);
+          if (!isNaN(parsed)) {
+            timestamp = Math.floor(parsed / 1000);
+          } else {
+            console.error('CommentBubble: Invalid timestamp string:', group.timestamp);
+            setIsVisible(false);
+            return;
+          }
+        } else {
+          console.error('CommentBubble: Unknown timestamp format:', group.timestamp);
+          setIsVisible(false);
+          return;
+        }
+        
+        // 現在の表示範囲を取得
+        const visibleRange = timeScale.getVisibleRange();
+        console.log('CommentBubble: Visible range:', visibleRange);
+        console.log('CommentBubble: Comment timestamp (seconds):', timestamp);
+        console.log('CommentBubble: Comment price:', group.price);
+        
+        // 表示範囲内かチェック（デバッグのため一時的に無効化）
+        // if (visibleRange && (timestamp < visibleRange.from || timestamp > visibleRange.to)) {
+        //   console.log('CommentBubble: Comment is outside visible range');
+        //   setIsVisible(false);
+        //   return;
+        // }
+        
+        // 座標を計算
         const x = timeScale.timeToCoordinate(timestamp);
         const y = priceScale.priceToCoordinate(group.price);
         
-        // デバッグログ
-        console.log(`Comment position - timestamp: ${timestamp}, price: ${group.price}, x: ${x}, y: ${y}`);
+        console.log('CommentBubble: Calculated coordinates - x:', x, 'y:', y);
         
-        if (x !== null && y !== null) {
-          setPosition({ x: x || 0, y: y || 0 });
+        // 座標が有効かチェック
+        if (x !== null && y !== null && !isNaN(x) && !isNaN(y) && x >= 0 && y >= 0) {
+          setPosition({ x: Math.round(x), y: Math.round(y) });
           setIsVisible(true);
+          console.log('CommentBubble: Setting visible at position:', { x: Math.round(x), y: Math.round(y) });
         } else {
-          // 座標が取得できない場合でも、とりあえず表示
-          console.log('Could not get coordinates, using defaults');
-          // チャートの中央付近に配置
-          const containerWidth = chartContainer.clientWidth;
-          const containerHeight = chartContainer.clientHeight;
-          setPosition({ 
-            x: containerWidth * 0.8, // 右寄りに配置
-            y: containerHeight * 0.5  // 中央の高さ
-          });
+          console.log('CommentBubble: Invalid coordinates, hiding comment');
+          // デバッグのため、画面中央に表示してみる
+          const debugX = chartContainer.clientWidth / 2;
+          const debugY = chartContainer.clientHeight / 2;
+          setPosition({ x: debugX, y: debugY });
           setIsVisible(true);
+          console.log('CommentBubble: Debug position set to center:', { x: debugX, y: debugY });
         }
       } catch (error) {
-        console.error('Error updating comment position:', error);
-        // エラー時でも表示を試みる
+        console.error('CommentBubble: Error updating position:', error);
+        // エラー時もデバッグ表示
+        const debugX = 100;
+        const debugY = 100;
+        setPosition({ x: debugX, y: debugY });
         setIsVisible(true);
-        setPosition({ x: 100, y: 100 }); // デフォルト位置
       }
     };
 
@@ -51,40 +94,41 @@ const CommentBubble = ({ group, chart, chartContainer }) => {
     updatePosition();
     
     // チャートの更新を監視
-    const timeScale = chart.timeScale();
-    const handleVisibleTimeRangeChange = () => updatePosition();
+    const intervalId = setInterval(updatePosition, 1000); // 1秒ごとに位置を更新
+    
+    // チャートイベントの監視
+    let unsubscribeTimeRange;
+    let unsubscribeCrosshair;
     
     try {
-      timeScale.subscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange);
+      const timeScale = chart.timeScale();
+      unsubscribeTimeRange = timeScale.subscribeVisibleTimeRangeChange(updatePosition);
+      unsubscribeCrosshair = chart.subscribeCrosshairMove(updatePosition);
     } catch (error) {
-      console.error('Error subscribing to time range change:', error);
+      console.error('CommentBubble: Error subscribing to events:', error);
     }
-    
-    // Crosshairの移動も監視
-    const handleCrosshairMove = () => updatePosition();
-    
-    try {
-      chart.subscribeCrosshairMove(handleCrosshairMove);
-    } catch (error) {
-      console.error('Error subscribing to crosshair move:', error);
-    }
-    
-    // 定期的に位置を更新（フォールバック）
-    const intervalId = setInterval(updatePosition, 1000);
     
     return () => {
       clearInterval(intervalId);
-      try {
-        timeScale.unsubscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange);
-        chart.unsubscribeCrosshairMove(handleCrosshairMove);
-      } catch (error) {
-        console.error('Error unsubscribing:', error);
+      if (unsubscribeTimeRange) {
+        try {
+          unsubscribeTimeRange();
+        } catch (e) {
+          console.error('CommentBubble: Error unsubscribing from time range:', e);
+        }
+      }
+      if (unsubscribeCrosshair) {
+        try {
+          unsubscribeCrosshair();
+        } catch (e) {
+          console.error('CommentBubble: Error unsubscribing from crosshair:', e);
+        }
       }
     };
   }, [group, chart, chartContainer]);
 
   if (!isVisible) {
-    console.log('Comment bubble not visible');
+    console.log('CommentBubble: Not rendering (not visible)');
     return null;
   }
 
@@ -92,25 +136,31 @@ const CommentBubble = ({ group, chart, chartContainer }) => {
   if (group.comments.length === 1) {
     const comment = group.comments[0];
     
-    // コメントを右側に配置するためのオフセット
-    const offsetX = 10;
-    const offsetY = -10;
+    console.log('CommentBubble: Rendering single comment at position:', position);
     
     return (
       <div 
         className="comment-bubble comment-bubble-single"
         style={{ 
           position: 'absolute',
-          left: `${position.x + offsetX}px`, 
-          top: `${position.y + offsetY}px`,
-          transform: 'none',
-          zIndex: 100 + (comment.id % 10),
-          pointerEvents: 'auto'
+          left: `${position.x}px`, 
+          top: `${position.y - 30}px`, // 上に配置
+          transform: 'translateX(-50%)',
+          zIndex: 1000, // 高いz-indexを設定
+          pointerEvents: 'auto',
+          // デバッグ用の背景色
+          background: 'rgba(255, 255, 255, 0.95)',
+          border: '2px solid #7dd3c0',
+          borderRadius: '20px',
+          padding: '0.4rem 0.8rem',
+          boxShadow: '0 2px 10px rgba(0, 0, 0, 0.15)'
         }}
         onClick={() => setShowDetails(!showDetails)}
       >
-        <span className="comment-emoji">{comment.emotion_icon || '💬'}</span>
-        <span className="comment-text">
+        <span className="comment-emoji" style={{ fontSize: '1.2rem', marginRight: '0.5rem' }}>
+          {comment.emotion_icon || '💬'}
+        </span>
+        <span className="comment-text" style={{ fontSize: '0.85rem', color: '#1f2937' }}>
           {showDetails || comment.content.length <= 30 
             ? comment.content 
             : comment.content.substring(0, 30) + '...'}
@@ -120,6 +170,8 @@ const CommentBubble = ({ group, chart, chartContainer }) => {
   }
 
   // 複数のコメント（集約表示）
+  console.log('CommentBubble: Rendering aggregated comments at position:', position);
+  
   return (
     <>
       <div 
@@ -127,10 +179,23 @@ const CommentBubble = ({ group, chart, chartContainer }) => {
         style={{ 
           position: 'absolute',
           left: `${position.x}px`, 
-          top: `${position.y}px`,
-          transform: 'translate(-50%, -50%)',
-          zIndex: 200,
-          pointerEvents: 'auto'
+          top: `${position.y - 30}px`,
+          transform: 'translateX(-50%)',
+          zIndex: 1000,
+          pointerEvents: 'auto',
+          // デバッグ用のスタイル
+          background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
+          color: 'white',
+          fontWeight: 'bold',
+          padding: '0.6rem',
+          borderRadius: '50%',
+          width: '40px',
+          height: '40px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: '0.85rem',
+          boxShadow: '0 2px 10px rgba(0, 0, 0, 0.15)'
         }}
         onClick={() => setShowDetails(!showDetails)}
       >
@@ -139,21 +204,21 @@ const CommentBubble = ({ group, chart, chartContainer }) => {
       
       {showDetails && (
         <div 
-          className="comment-details"
           style={{ 
             position: 'absolute',
             left: `${position.x}px`, 
-            top: `${position.y + 30}px`,
+            top: `${position.y + 20}px`,
             transform: 'translateX(-50%)',
             background: 'white',
             borderRadius: '1rem',
             padding: '0.75rem',
             boxShadow: '0 4px 15px rgba(0, 0, 0, 0.15)',
-            zIndex: 300,
+            zIndex: 1001,
             maxWidth: '250px',
             maxHeight: '200px',
             overflowY: 'auto',
-            pointerEvents: 'auto'
+            pointerEvents: 'auto',
+            border: '1px solid #e5e7eb'
           }}
         >
           {group.comments.map((comment, idx) => (

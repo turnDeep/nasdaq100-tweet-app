@@ -9,14 +9,62 @@ const Chart = ({ data, comments, onCandleClick }) => {
   const [visibleComments, setVisibleComments] = useState([]);
   const clickTimeoutRef = useRef(null);
 
+  // コメントを集約する関数
   const aggregateComments = useCallback((commentsToAggregate) => {
-    // 近接するコメントを集約（価格差を50に増やして集約を大幅に減らす）
-    const priceThreshold = 50;
+    if (!commentsToAggregate || commentsToAggregate.length === 0) {
+      console.log('Chart: No comments to aggregate');
+      return [];
+    }
+
+    console.log('Chart: Aggregating', commentsToAggregate.length, 'comments');
+    
+    // 価格と時間でコメントをグループ化
+    const priceThreshold = 50; // 価格差の閾値
+    const timeThreshold = 300; // 5分以内のコメントをグループ化
     const aggregated = [];
     
     commentsToAggregate.forEach(comment => {
+      console.log('Chart: Processing comment:', {
+        id: comment.id,
+        timestamp: comment.timestamp,
+        timestampType: typeof comment.timestamp,
+        price: comment.price,
+        content: comment.content?.substring(0, 20)
+      });
+      
+      // タイムスタンプを秒に変換
+      let commentTimestamp;
+      if (typeof comment.timestamp === 'number') {
+        if (comment.timestamp > 1000000000000) {
+          // ミリ秒の場合は秒に変換
+          commentTimestamp = Math.floor(comment.timestamp / 1000);
+        } else {
+          commentTimestamp = comment.timestamp;
+        }
+      } else if (typeof comment.timestamp === 'string') {
+        commentTimestamp = Math.floor(new Date(comment.timestamp).getTime() / 1000);
+      } else {
+        console.error('Chart: Invalid comment timestamp:', comment.timestamp);
+        return;
+      }
+      
+      // 近接するコメントグループを探す
       const nearby = aggregated.find(group => {
-        return Math.abs(group.price - comment.price) < priceThreshold;
+        let groupTimestamp;
+        if (typeof group.timestamp === 'number') {
+          if (group.timestamp > 1000000000000) {
+            groupTimestamp = Math.floor(group.timestamp / 1000);
+          } else {
+            groupTimestamp = group.timestamp;
+          }
+        } else {
+          groupTimestamp = Math.floor(new Date(group.timestamp).getTime() / 1000);
+        }
+        
+        const priceDiff = Math.abs(group.price - comment.price);
+        const timeDiff = Math.abs(groupTimestamp - commentTimestamp);
+        
+        return priceDiff < priceThreshold && timeDiff < timeThreshold;
       });
       
       if (nearby) {
@@ -24,62 +72,70 @@ const Chart = ({ data, comments, onCandleClick }) => {
       } else {
         aggregated.push({
           price: comment.price,
-          timestamp: comment.timestamp,
+          timestamp: comment.timestamp, // 元の形式を保持
           comments: [comment]
         });
       }
     });
     
-    console.log(`Aggregated ${commentsToAggregate.length} comments into ${aggregated.length} groups`);
+    console.log('Chart: Created', aggregated.length, 'comment groups');
     return aggregated;
   }, []);
 
+  // 表示するコメントを更新
   const updateVisibleComments = useCallback(() => {
-    const chart = chartRef.current;
-    if (!chart || !comments || comments.length === 0) {
-      console.log('No chart or comments to display');
+    console.log('Chart: updateVisibleComments called');
+    
+    if (!chartRef.current) {
+      console.log('Chart: No chart reference');
+      setVisibleComments([]);
+      return;
+    }
+    
+    if (!comments || comments.length === 0) {
+      console.log('Chart: No comments to display');
       setVisibleComments([]);
       return;
     }
 
     try {
-      // 常にすべてのコメントを表示（フィルタリングしない）
-      console.log(`Showing all ${comments.length} comments`);
+      // すべてのコメントを表示（フィルタリングを一時的に無効化）
+      console.log('Chart: Processing all', comments.length, 'comments');
+      
+      // コメントを集約
       const aggregated = aggregateComments(comments);
+      console.log('Chart: Setting', aggregated.length, 'visible comment groups');
       setVisibleComments(aggregated);
+      
     } catch (error) {
-      console.error('Error updating visible comments:', error);
+      console.error('Chart: Error updating visible comments:', error);
       setVisibleComments([]);
     }
   }, [comments, aggregateComments]);
 
+  // チャートクリックハンドラー
   const handleChartClick = useCallback((param) => {
-    // チャートの外側や、データがない場合をクリックした場合は何もしない
     if (!param.point || !param.time) {
-      console.log('Click outside chart area or no data');
+      console.log('Chart: Click outside chart area or no data');
       return;
     }
 
-    // seriesRefからローソク足データを取得
     const candleSeries = seriesRef.current;
     if (!candleSeries) {
-      console.log('No candle series');
+      console.log('Chart: No candle series');
       return;
     }
 
     const priceData = param.seriesData?.get(candleSeries);
     
     if (priceData) {
-      console.log('クリックされたローソク足のデータ:', priceData);
+      console.log('Chart: Clicked candle data:', priceData);
       
-      // Y座標から価格を計算（seriesのcoordinateToPriceメソッドを使用）
       let clickedPrice;
       if (param.point.y !== undefined) {
         try {
-          // シリーズAPIのcoordinateToPriceメソッドを使用
           clickedPrice = candleSeries.coordinateToPrice(param.point.y);
           
-          // もしnullやundefinedが返された場合は、ローソク足の範囲で計算
           if (clickedPrice === null || clickedPrice === undefined) {
             const chartHeight = chartContainerRef.current?.clientHeight || 500;
             const yRatio = param.point.y / chartHeight;
@@ -87,28 +143,20 @@ const Chart = ({ data, comments, onCandleClick }) => {
             clickedPrice = priceData.high - (priceRange * yRatio);
           }
         } catch (error) {
-          console.error('Error getting price from coordinate:', error);
-          // エラーの場合はフォールバック
-          const chartHeight = chartContainerRef.current?.clientHeight || 500;
-          const yRatio = param.point.y / chartHeight;
-          const priceRange = priceData.high - priceData.low;
-          clickedPrice = priceData.high - (priceRange * yRatio);
+          console.error('Chart: Error getting price from coordinate:', error);
+          clickedPrice = priceData.close;
         }
       } else {
-        // フォールバック：終値を使用
         clickedPrice = priceData.close;
       }
       
-      // ローソク足の範囲内に制限（ヒゲの範囲まで含める）
-      // 制限を緩和して、ローソク足の上下に少し余裕を持たせる
-      const margin = (priceData.high - priceData.low) * 0.1; // 10%のマージン
+      const margin = (priceData.high - priceData.low) * 0.1;
       const minPrice = priceData.low - margin;
       const maxPrice = priceData.high + margin;
       clickedPrice = Math.max(minPrice, Math.min(maxPrice, clickedPrice));
       
-      console.log('計算された価格:', clickedPrice);
+      console.log('Chart: Calculated click price:', clickedPrice);
       
-      // onCandleClickを呼び出す（時間も含めて渡す）
       if (onCandleClick) {
         onCandleClick({
           time: param.time,
@@ -119,62 +167,10 @@ const Chart = ({ data, comments, onCandleClick }) => {
           close: priceData.close
         });
       }
-    } else {
-      console.log('No price data available at click position');
-      
-      // priceDataがない場合は、時間だけを使って最も近いローソク足を探す
-      if (!data || data.length === 0) return;
-      
-      let closestCandle = null;
-      let minTimeDiff = Infinity;
-
-      data.forEach(candle => {
-        const timeDiff = Math.abs(candle.time - param.time);
-        if (timeDiff < minTimeDiff) {
-          minTimeDiff = timeDiff;
-          closestCandle = candle;
-        }
-      });
-
-      if (closestCandle && onCandleClick) {
-        // Y座標から価格を推定
-        let clickedPrice;
-        
-        if (param.point.y !== undefined && candleSeries) {
-          try {
-            clickedPrice = candleSeries.coordinateToPrice(param.point.y);
-          } catch (error) {
-            console.error('Error getting price from coordinate:', error);
-            clickedPrice = null;
-          }
-          
-          if (clickedPrice === null || clickedPrice === undefined) {
-            const chartHeight = chartContainerRef.current?.clientHeight || 500;
-            const yRatio = param.point.y / chartHeight;
-            const priceRange = closestCandle.high - closestCandle.low;
-            clickedPrice = closestCandle.high - (priceRange * yRatio);
-          }
-        } else {
-          clickedPrice = closestCandle.close;
-        }
-        
-        // マージンを追加
-        const margin = (closestCandle.high - closestCandle.low) * 0.1;
-        const constrainedPrice = Math.max(closestCandle.low - margin, Math.min(closestCandle.high + margin, clickedPrice));
-        
-        onCandleClick({
-          time: closestCandle.time,
-          price: constrainedPrice,
-          open: closestCandle.open,
-          high: closestCandle.high,
-          low: closestCandle.low,
-          close: closestCandle.close
-        });
-      }
     }
-  }, [data, onCandleClick]);
+  }, [onCandleClick]);
 
-  // タッチ/長押し用のハンドラー
+  // 長押しハンドラー（モバイル用）
   const handleLongPress = useCallback((e) => {
     e.preventDefault();
     
@@ -189,7 +185,6 @@ const Chart = ({ data, comments, onCandleClick }) => {
     const time = timeScale.coordinateToTime(x);
     
     if (time && candleSeries) {
-      // 最も近いローソク足を探す
       let closestCandle = null;
       let minTimeDiff = Infinity;
 
@@ -202,12 +197,11 @@ const Chart = ({ data, comments, onCandleClick }) => {
       });
 
       if (closestCandle && onCandleClick) {
-        // Y座標から価格を計算
         let clickedPrice;
         try {
           clickedPrice = candleSeries.coordinateToPrice(y);
         } catch (error) {
-          console.error('Error getting price from coordinate:', error);
+          console.error('Chart: Error getting price from coordinate:', error);
           clickedPrice = null;
         }
         
@@ -218,7 +212,6 @@ const Chart = ({ data, comments, onCandleClick }) => {
           clickedPrice = closestCandle.high - (priceRange * yRatio);
         }
         
-        // マージンを追加
         const margin = (closestCandle.high - closestCandle.low) * 0.1;
         const constrainedPrice = Math.max(closestCandle.low - margin, Math.min(closestCandle.high + margin, clickedPrice));
         
@@ -234,7 +227,7 @@ const Chart = ({ data, comments, onCandleClick }) => {
     }
   }, [data, onCandleClick]);
 
-  // マウス/タッチイベントハンドラー
+  // ポインターイベントハンドラー
   const handlePointerDown = useCallback((e) => {
     const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
     
@@ -252,10 +245,12 @@ const Chart = ({ data, comments, onCandleClick }) => {
     }
   }, []);
 
+  // チャートの初期化
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    // チャートを初期化
+    console.log('Chart: Initializing chart');
+
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
       height: 500,
@@ -280,7 +275,7 @@ const Chart = ({ data, comments, onCandleClick }) => {
         secondsVisible: false,
       },
       crosshair: {
-        mode: 0, // Normal mode (マグネットモード無効)
+        mode: 0,
         vertLine: {
           width: 1,
           color: '#758696',
@@ -304,10 +299,9 @@ const Chart = ({ data, comments, onCandleClick }) => {
     chartRef.current = chart;
     seriesRef.current = candlestickSeries;
 
-    // チャートのクリックイベント
+    // イベントリスナーの設定
     chart.subscribeClick(handleChartClick);
 
-    // タッチ/マウスイベントの登録（モバイル長押し用）
     const container = chartContainerRef.current;
     container.addEventListener('pointerdown', handlePointerDown);
     container.addEventListener('pointerup', handlePointerUp);
@@ -319,25 +313,46 @@ const Chart = ({ data, comments, onCandleClick }) => {
         chart.applyOptions({ 
           width: chartContainerRef.current.clientWidth 
         });
+        updateVisibleComments();
       }
     };
     window.addEventListener('resize', handleResize);
+
+    // チャートの表示範囲変更を監視
+    const timeScale = chart.timeScale();
+    const handleVisibleTimeRangeChange = () => {
+      console.log('Chart: Visible time range changed');
+      updateVisibleComments();
+    };
+    
+    try {
+      timeScale.subscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange);
+    } catch (error) {
+      console.error('Chart: Error subscribing to time range change:', error);
+    }
 
     return () => {
       container.removeEventListener('pointerdown', handlePointerDown);
       container.removeEventListener('pointerup', handlePointerUp);
       container.removeEventListener('pointercancel', handlePointerUp);
       window.removeEventListener('resize', handleResize);
+      
+      try {
+        timeScale.unsubscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange);
+      } catch (error) {
+        console.error('Chart: Error unsubscribing from time range change:', error);
+      }
+      
       chart.unsubscribeClick(handleChartClick);
       chart.remove();
     };
-  }, [handleChartClick, handlePointerDown, handlePointerUp]);
+  }, [handleChartClick, handlePointerDown, handlePointerUp, updateVisibleComments]);
 
+  // データ更新時の処理
   useEffect(() => {
-    // データを更新
     if (seriesRef.current && data && data.length > 0) {
       try {
-        console.log('Updating chart with', data.length, 'candles');
+        console.log('Chart: Updating chart with', data.length, 'candles');
         seriesRef.current.setData(data);
         
         // データ更新後にコメントの表示を更新
@@ -345,32 +360,60 @@ const Chart = ({ data, comments, onCandleClick }) => {
           updateVisibleComments();
         }, 100);
       } catch (error) {
-        console.error('Error setting chart data:', error);
+        console.error('Chart: Error setting chart data:', error);
       }
     }
   }, [data, updateVisibleComments]);
 
+  // コメント更新時の処理
   useEffect(() => {
-    // コメントの表示を更新
-    console.log(`Chart received ${comments.length} comments`);
+    console.log('Chart: Comments prop changed, received', comments?.length || 0, 'comments');
     updateVisibleComments();
   }, [comments, updateVisibleComments]);
+
+  console.log('Chart: Rendering with', visibleComments.length, 'visible comment groups');
 
   return (
     <div className="chart-container">
       <div className="chart-instructions">
         💡 チャート上の任意の価格をクリック（モバイル: 長押し）でコメント投稿
       </div>
-      <div ref={chartContainerRef} className="chart" style={{ cursor: 'crosshair', position: 'relative' }} />
-      <div className="comment-overlay">
-        {visibleComments.map((group, index) => (
-          <CommentBubble
-            key={`comment-group-${group.comments[0]?.id || index}-${group.timestamp}`}
-            group={group}
-            chart={chartRef.current}
-            chartContainer={chartContainerRef.current}
-          />
-        ))}
+      <div 
+        ref={chartContainerRef} 
+        className="chart" 
+        style={{ 
+          cursor: 'crosshair', 
+          position: 'relative',
+          width: '100%',
+          height: '500px'
+        }} 
+      />
+      {/* コメントオーバーレイ */}
+      <div 
+        className="comment-overlay"
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          pointerEvents: 'none',
+          zIndex: 100
+        }}
+      >
+        {visibleComments.map((group, index) => {
+          const key = `comment-group-${group.comments[0]?.id || 'unknown'}-${index}`;
+          console.log('Chart: Rendering comment group with key:', key);
+          
+          return (
+            <CommentBubble
+              key={key}
+              group={group}
+              chart={chartRef.current}
+              chartContainer={chartContainerRef.current}
+            />
+          );
+        })}
       </div>
     </div>
   );

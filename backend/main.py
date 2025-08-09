@@ -10,6 +10,7 @@ import os
 from dotenv import load_dotenv
 import logging
 from decimal import Decimal
+import time
 
 from database import get_db, init_db
 from models import Comment
@@ -85,22 +86,58 @@ async def startup_event():
         # デモデータがない場合は作成
         if existing_count == 0:
             logger.info("Creating demo comments...")
+            # 現在時刻から遡って配置（秒単位で考える）
+            now = datetime.now(timezone.utc)
+            current_unix = int(time.time())
+            
             demo_comments = [
-                {"content": "ナスダック強気！🚀", "emotion_icon": "🚀", "price": 17100.50},
-                {"content": "この辺で買い増し検討中", "emotion_icon": "😊", "price": 17050.25},
-                {"content": "利確しました。様子見", "emotion_icon": "😎", "price": 17150.75},
-                {"content": "下落トレンドかも？", "emotion_icon": "😢", "price": 16950.00},
-                {"content": "長期的には上昇すると思う", "emotion_icon": "🤔", "price": 17000.00},
+                {
+                    "content": "ナスダック強気！🚀", 
+                    "emotion_icon": "🚀", 
+                    "price": 23700.50,  # 現在の価格帯に合わせる
+                    "seconds_ago": 300  # 5分前
+                },
+                {
+                    "content": "この辺で買い増し検討中", 
+                    "emotion_icon": "😊", 
+                    "price": 23650.25,
+                    "seconds_ago": 900  # 15分前
+                },
+                {
+                    "content": "利確しました。様子見", 
+                    "emotion_icon": "😎", 
+                    "price": 23750.75,
+                    "seconds_ago": 1800  # 30分前
+                },
+                {
+                    "content": "下落トレンドかも？", 
+                    "emotion_icon": "😢", 
+                    "price": 23550.00,
+                    "seconds_ago": 2700  # 45分前
+                },
+                {
+                    "content": "長期的には上昇すると思う", 
+                    "emotion_icon": "🤔", 
+                    "price": 23600.00,
+                    "seconds_ago": 3600  # 60分前
+                },
             ]
             
-            for i, demo in enumerate(demo_comments):
+            for demo in demo_comments:
+                # タイムスタンプを秒単位で計算
+                timestamp = now - timedelta(seconds=demo["seconds_ago"])
+                
                 comment = Comment(
-                    timestamp=datetime.now(timezone.utc) - timedelta(minutes=i*10),
+                    timestamp=timestamp,
                     price=Decimal(str(demo["price"])),
                     content=demo["content"],
                     emotion_icon=demo["emotion_icon"]
                 )
                 db.add(comment)
+                
+                # デバッグログ
+                unix_timestamp = int(timestamp.timestamp())
+                logger.info(f"Creating demo comment: timestamp={unix_timestamp} (unix seconds), price={demo['price']}, content={demo['content'][:20]}...")
             
             db.commit()
             logger.info(f"Created {len(demo_comments)} demo comments")
@@ -108,7 +145,8 @@ async def startup_event():
         # コメントを表示（デバッグ用）
         comments = db.query(Comment).order_by(Comment.timestamp.desc()).limit(5).all()
         for c in comments:
-            logger.info(f"Comment {c.id}: timestamp={c.timestamp}, price={c.price}, content={c.content[:30]}")
+            unix_timestamp = int(c.timestamp.timestamp()) if c.timestamp else 0
+            logger.info(f"Comment {c.id}: unix_timestamp={unix_timestamp}, price={c.price}, content={c.content[:30]}")
             
     except Exception as e:
         logger.error(f"Error in startup: {e}")
@@ -156,11 +194,15 @@ async def websocket_endpoint(websocket: WebSocket):
                     content = str(data.get("content", "")).strip()
                     emotion_icon = data.get("emotion_icon")
                     
-                    # タイムスタンプの処理を改善
+                    # タイムスタンプの処理
+                    # クライアントから送られたtimestamp（ローソク足の時間）を使用
                     if "timestamp" in data and data["timestamp"]:
                         # クライアントから送られたタイムスタンプ（秒単位のUNIXタイム）
+                        client_timestamp = data["timestamp"]
+                        logger.info(f"Received timestamp from client: {client_timestamp} (type: {type(client_timestamp)})")
+                        
                         # timezone-awareなdatetimeに変換
-                        timestamp = datetime.fromtimestamp(data["timestamp"], tz=timezone.utc)
+                        timestamp = datetime.fromtimestamp(client_timestamp, tz=timezone.utc)
                     else:
                         # 現在時刻をUTCで取得（timezone-aware）
                         timestamp = datetime.now(timezone.utc)
@@ -184,22 +226,26 @@ async def websocket_endpoint(websocket: WebSocket):
                     db.commit()
                     db.refresh(comment)
                     
+                    # UNIXタイムスタンプ（秒）として送信
+                    comment_timestamp = int(comment.timestamp.timestamp())
+                    
                     # 保存成功をログ
-                    logger.info(f"Comment saved: ID={comment.id}, timestamp={comment.timestamp}, price={comment.price}, content={comment.content[:50]}...")
+                    logger.info(f"Comment saved: ID={comment.id}, unix_timestamp={comment_timestamp}, price={comment.price}, content={comment.content[:50]}...")
                     
                     # 全クライアントにブロードキャスト
                     broadcast_data = {
                         "type": "new_comment",
                         "data": {
                             "id": comment.id,
-                            "timestamp": comment.timestamp.isoformat() if comment.timestamp else datetime.now(timezone.utc).isoformat(),
+                            "timestamp": comment_timestamp,  # UNIXタイムスタンプ（秒）として送信
                             "price": float(comment.price),
                             "content": comment.content,
                             "emotion_icon": comment.emotion_icon
                         }
                     }
+                    
+                    logger.info(f"Broadcasting comment: ID={broadcast_data['data']['id']}, timestamp={comment_timestamp} (unix seconds)")
                     await manager.broadcast(broadcast_data)
-                    logger.info(f"Comment broadcasted: ID={broadcast_data['data']['id']}")
                     
                     # 送信者に確認メッセージを送信
                     await websocket.send_json({
@@ -241,6 +287,12 @@ async def get_market_data(symbol: str, interval: str):
     try:
         logger.info(f"Fetching market data for {symbol} with interval {interval}")
         data = market_service.get_historical_data(symbol, interval)
+        
+        # デバッグ：最初と最後のデータポイントをログ
+        if data and len(data) > 0:
+            logger.info(f"Market data: first timestamp={data[0]['time']}, last timestamp={data[-1]['time']}")
+            logger.info(f"Market data: first price={data[0]['close']}, last price={data[-1]['close']}")
+        
         return {"success": True, "data": data}
     except Exception as e:
         logger.error(f"Error getting market data: {e}")
@@ -249,31 +301,36 @@ async def get_market_data(symbol: str, interval: str):
 
 @app.get("/api/comments")
 async def get_comments(hours: int = 24, interval: str = None, db: Session = Depends(get_db)):
-    """コメントを取得（フィルタリングを緩和）"""
+    """コメントを取得（タイムスタンプをUNIXタイムスタンプ（秒）として返す）"""
     try:
         # すべてのコメントを取得（フィルタリングなし）
         comments = db.query(Comment).order_by(Comment.timestamp.desc()).all()
         
         logger.info(f"Found {len(comments)} total comments in database")
         
-        # デバッグ用：最初の5件のコメントを詳細ログ
-        for i, c in enumerate(comments[:5]):
-            logger.info(f"Comment {i}: id={c.id}, timestamp={c.timestamp}, price={c.price}, content={c.content[:30]}")
-        
         result = {
-            "comments": [
-                {
-                    "id": c.id,
-                    "timestamp": c.timestamp.isoformat() if c.timestamp else datetime.now(timezone.utc).isoformat(),
-                    "price": float(c.price),
-                    "content": c.content,
-                    "emotion_icon": c.emotion_icon
-                }
-                for c in comments
-            ]
+            "comments": []
         }
         
-        logger.info(f"Returning {len(result['comments'])} comments")
+        # 各コメントを処理
+        for c in comments:
+            unix_timestamp = int(c.timestamp.timestamp()) if c.timestamp else int(datetime.now(timezone.utc).timestamp())
+            
+            comment_data = {
+                "id": c.id,
+                "timestamp": unix_timestamp,  # UNIXタイムスタンプ（秒）
+                "price": float(c.price),
+                "content": c.content,
+                "emotion_icon": c.emotion_icon
+            }
+            
+            result["comments"].append(comment_data)
+            
+            # デバッグ：最初の5件を詳細ログ
+            if len(result["comments"]) <= 5:
+                logger.info(f"Comment {c.id}: unix_timestamp={unix_timestamp}, price={c.price}, content={c.content[:30]}")
+        
+        logger.info(f"Returning {len(result['comments'])} comments with UNIX timestamps (seconds)")
         return result
         
     except Exception as e:

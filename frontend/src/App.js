@@ -51,6 +51,34 @@ function generateDemoData(timeFrame) {
   return data;
 }
 
+// デモコメント生成（タイムスタンプを秒単位で）
+function generateDemoComments() {
+  const now = Math.floor(Date.now() / 1000);
+  return [
+    {
+      id: 1,
+      timestamp: now - 300,  // 5分前
+      price: 17100.50,
+      content: 'ナスダック強気！🚀',
+      emotion_icon: '🚀'
+    },
+    {
+      id: 2,
+      timestamp: now - 900,  // 15分前
+      price: 17050.25,
+      content: 'この辺で買い増し検討中',
+      emotion_icon: '😊'
+    },
+    {
+      id: 3,
+      timestamp: now - 1800,  // 30分前
+      price: 17150.75,
+      content: '利確しました。様子見',
+      emotion_icon: '😎'
+    }
+  ];
+}
+
 function App() {
   const [timeFrame, setTimeFrame] = useState('15m');
   const [comments, setComments] = useState([]);
@@ -104,6 +132,7 @@ function App() {
             console.log('Comment:', {
               id: comment.id,
               timestamp: comment.timestamp,
+              timestampType: typeof comment.timestamp,
               price: comment.price,
               content: comment.content.substring(0, 30),
               emotion_icon: comment.emotion_icon
@@ -120,29 +149,7 @@ function App() {
       console.error('Failed to load comments:', error);
       
       // エラー時にデモコメントを表示
-      const demoComments = [
-        {
-          id: 1,
-          timestamp: new Date().toISOString(),
-          price: 17100.50,
-          content: 'ナスダック強気！🚀',
-          emotion_icon: '🚀'
-        },
-        {
-          id: 2,
-          timestamp: new Date(Date.now() - 600000).toISOString(),
-          price: 17050.25,
-          content: 'この辺で買い増し検討中',
-          emotion_icon: '😊'
-        },
-        {
-          id: 3,
-          timestamp: new Date(Date.now() - 1200000).toISOString(),
-          price: 17150.75,
-          content: '利確しました。様子見',
-          emotion_icon: '😎'
-        }
-      ];
+      const demoComments = generateDemoComments();
       setComments(demoComments);
     }
   }, []);
@@ -215,6 +222,8 @@ function App() {
     // 新しいコメントを受信
     ws.on('new_comment', (data) => {
       console.log('New comment received via WebSocket:', data);
+      console.log('Timestamp type:', typeof data.timestamp);
+      
       setComments(prev => {
         // 重複を避ける
         const exists = prev.find(c => c.id === data.id);
@@ -222,7 +231,9 @@ function App() {
           console.log('Comment already exists, skipping');
           return prev;
         }
-        const newComments = [...prev, data];
+        
+        // 新しいコメントを追加（最新のコメントを先頭に）
+        const newComments = [data, ...prev];
         console.log('Total comments after adding new:', newComments.length);
         return newComments;
       });
@@ -234,8 +245,19 @@ function App() {
     // コメント保存の確認メッセージ
     ws.on('comment_saved', (data) => {
       console.log('Comment saved confirmation:', data);
-      // コメントを即座に再読み込み
-      loadComments();
+      console.log('Saved timestamp type:', typeof data.timestamp);
+      
+      // 即座にコメントリストに追加
+      setComments(prev => {
+        const exists = prev.find(c => c.id === data.id);
+        if (!exists) {
+          return [data, ...prev];
+        }
+        return prev;
+      });
+      
+      // センチメントを更新
+      loadSentiment();
     });
     
     // エラーメッセージ
@@ -288,13 +310,14 @@ function App() {
     if (wsService && selectedCandle) {
       const message = {
         type: 'post_comment',
-        timestamp: selectedCandle.time,  // ローソク足の時間を送信
+        timestamp: selectedCandle.time,  // ローソク足の時間を送信（秒単位のUNIXタイムスタンプ）
         price: customPrice || selectedCandle.price,  // カスタム価格または選択した価格
         content: content,
         emotion_icon: emotionIcon
       };
       
       console.log('Sending WebSocket message:', message);
+      console.log('Timestamp being sent:', message.timestamp, 'Type:', typeof message.timestamp);
       wsService.send(message);
     } else {
       console.error('WebSocket service not initialized or candle not selected');
