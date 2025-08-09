@@ -16,6 +16,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: always
 
   backend:
     build: ./backend
@@ -30,6 +31,7 @@ services:
     volumes:
       - ./backend:/app
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    restart: always
 
 volumes:
   postgres_data:
