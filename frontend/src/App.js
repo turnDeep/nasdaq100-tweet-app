@@ -56,7 +56,6 @@ function App() {
   const [comments, setComments] = useState([]);
   const [sentiment, setSentiment] = useState({ buy_percentage: 50, sell_percentage: 50 });
   const [showPostModal, setShowPostModal] = useState(false);
-  const [currentPrice, setCurrentPrice] = useState(17000);
   const [chartData, setChartData] = useState([]);
   const [wsService, setWsService] = useState(null);
   const [selectedCandle, setSelectedCandle] = useState(null);
@@ -78,10 +77,6 @@ function App() {
       
       if (res.data.data && res.data.data.length > 0) {
         setChartData(res.data.data);
-        const latestData = res.data.data[res.data.data.length - 1];
-        if (latestData && latestData.close) {
-          setCurrentPrice(latestData.close);
-        }
       }
       setConnectionError(false);
     } catch (error) {
@@ -96,7 +91,6 @@ function App() {
       // デモデータを設定
       const demoData = generateDemoData(timeFrame);
       setChartData(demoData);
-      setCurrentPrice(17000);
     }
   }, [timeFrame]);
 
@@ -125,57 +119,6 @@ function App() {
       console.error('Failed to load initial data:', error);
     }
   }, [loadSentiment, timeFrame]);
-
-  useEffect(() => {
-    // WebSocket接続を初期化
-    const wsUrl = API_URL.replace('http', 'ws').replace('https', 'wss');
-    console.log('Initializing WebSocket connection to:', `${wsUrl}/ws`);
-    
-    const ws = new WebSocketService(`${wsUrl}/ws`);
-    setWsService(ws);
-    
-    ws.on('new_comment', (data) => {
-      console.log('New comment received:', data);
-      setComments(prev => {
-        const newComments = [...prev, data];
-        console.log('Total comments:', newComments.length);
-        return newComments;
-      });
-      
-      // センチメントも更新
-      loadSentiment();
-    });
-    
-    ws.on('market_update', (data) => {
-      console.log('Market update received:', data);
-      if (data && data.price) {
-        setCurrentPrice(data.price);
-        // チャートデータに新しいポイントを追加
-        updateChartWithNewPrice(data.price);
-      }
-    });
-
-    // 初期データを取得
-    loadInitialData();
-    loadChartData();
-    
-    // 定期的にチャートデータを更新（30秒ごと）
-    const intervalId = setInterval(() => {
-      loadChartData();
-    }, 30000);
-    
-    return () => {
-      console.log('Cleaning up WebSocket connection');
-      clearInterval(intervalId);
-      ws.close();
-    };
-  }, [loadInitialData, loadChartData, loadSentiment]);
-
-  useEffect(() => {
-    // 時間枠が変更されたらデータを再読み込み
-    loadChartData();
-    loadInitialData();
-  }, [timeFrame, loadChartData, loadInitialData]);
 
   const updateChartWithNewPrice = useCallback((newPrice) => {
     setChartData(prevData => {
@@ -222,20 +165,70 @@ function App() {
     });
   }, [timeFrame]);
 
+  useEffect(() => {
+    // WebSocket接続を初期化
+    const wsUrl = API_URL.replace('http', 'ws').replace('https', 'wss');
+    console.log('Initializing WebSocket connection to:', `${wsUrl}/ws`);
+    
+    const ws = new WebSocketService(`${wsUrl}/ws`);
+    setWsService(ws);
+    
+    ws.on('new_comment', (data) => {
+      console.log('New comment received:', data);
+      setComments(prev => {
+        const newComments = [...prev, data];
+        console.log('Total comments:', newComments.length);
+        return newComments;
+      });
+      
+      // センチメントも更新
+      loadSentiment();
+    });
+    
+    ws.on('market_update', (data) => {
+      console.log('Market update received:', data);
+      if (data && data.price) {
+        // チャートデータに新しいポイントを追加
+        updateChartWithNewPrice(data.price);
+      }
+    });
+
+    // 初期データを取得
+    loadInitialData();
+    loadChartData();
+    
+    // 定期的にチャートデータを更新（30秒ごと）
+    const intervalId = setInterval(() => {
+      loadChartData();
+    }, 30000);
+    
+    return () => {
+      console.log('Cleaning up WebSocket connection');
+      clearInterval(intervalId);
+      ws.close();
+    };
+  }, [loadInitialData, loadChartData, loadSentiment, updateChartWithNewPrice]);
+
+  useEffect(() => {
+    // 時間枠が変更されたらデータを再読み込み
+    loadChartData();
+    loadInitialData();
+  }, [timeFrame, loadChartData, loadInitialData]);
+
   const handleCandleClick = useCallback((candleData) => {
-    console.log('Candle clicked with price:', candleData.price);
+    console.log('Candle clicked with data:', candleData);
     setSelectedCandle(candleData);
     setShowPostModal(true);
   }, []);
 
-  const handlePostComment = async (content, emotionIcon) => {
-    console.log('Posting comment:', content, emotionIcon);
+  const handlePostComment = async (content, emotionIcon, customPrice) => {
+    console.log('Posting comment:', content, emotionIcon, customPrice);
     
     if (wsService && selectedCandle) {
       wsService.send({
         type: 'post_comment',
         timestamp: selectedCandle.time,  // ローソク足の時間を送信
-        price: selectedCandle.price,      // 選択した価格を送信
+        price: customPrice || selectedCandle.price,  // カスタム価格または選択した価格
         content: content,
         emotion_icon: emotionIcon
       });
@@ -273,7 +266,6 @@ function App() {
         <Chart 
           data={chartData}
           comments={comments}
-          onPriceUpdate={setCurrentPrice}
           onCandleClick={handleCandleClick}
         />
       </main>
@@ -285,7 +277,7 @@ function App() {
             setSelectedCandle(null);
           }}
           onSubmit={handlePostComment}
-          currentPrice={selectedCandle.price}
+          candleData={selectedCandle}
         />
       )}
     </div>
