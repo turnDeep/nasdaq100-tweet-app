@@ -54,6 +54,7 @@ class ConnectionManager:
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
+                logger.info(f"Broadcasted message to a connection: {message['type']}")
             except Exception as e:
                 logger.error(f"Error broadcasting to connection: {e}")
                 disconnected.append(connection)
@@ -75,6 +76,16 @@ async def startup_event():
     logger.info("CORS enabled for all origins")
     # マーケットデータの定期更新を開始
     asyncio.create_task(market_data_updater())
+    
+    # デバッグ用：起動時に既存のコメントを確認
+    db = next(get_db())
+    try:
+        comments = db.query(Comment).all()
+        logger.info(f"Found {len(comments)} existing comments in database")
+        for c in comments[:5]:  # 最初の5件を表示
+            logger.info(f"Comment {c.id}: timestamp={c.timestamp}, price={c.price}, content={c.content[:30]}")
+    finally:
+        db.close()
 
 async def market_data_updater():
     """マーケットデータを定期的に更新"""
@@ -124,6 +135,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     
                     if not content:
                         logger.warning("Empty comment content received")
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "コメント内容が空です"
+                        })
                         continue
                     
                     # コメントをDBに保存
@@ -138,26 +153,41 @@ async def websocket_endpoint(websocket: WebSocket):
                     db.refresh(comment)
                     
                     # 保存成功をログ
-                    logger.info(f"Comment saved: ID={comment.id}, timestamp={comment.timestamp}, content={comment.content[:50]}...")
+                    logger.info(f"Comment saved: ID={comment.id}, timestamp={comment.timestamp}, price={comment.price}, content={comment.content[:50]}...")
+                    
+                    # 保存したコメントを確認
+                    saved_comment = db.query(Comment).filter(Comment.id == comment.id).first()
+                    if saved_comment:
+                        logger.info(f"Verified saved comment: {saved_comment.id}")
                     
                     # 全クライアントにブロードキャスト
                     broadcast_data = {
                         "type": "new_comment",
                         "data": {
                             "id": comment.id,
-                            "timestamp": comment.timestamp.isoformat(),
+                            "timestamp": comment.timestamp.isoformat() if comment.timestamp else datetime.now(timezone.utc).isoformat(),
                             "price": float(comment.price),
                             "content": comment.content,
                             "emotion_icon": comment.emotion_icon
                         }
                     }
                     await manager.broadcast(broadcast_data)
-                    logger.info(f"Comment broadcasted: {broadcast_data}")
+                    logger.info(f"Comment broadcasted: ID={broadcast_data['data']['id']}, timestamp={broadcast_data['data']['timestamp']}")
+                    
+                    # 送信者に確認メッセージを送信
+                    await websocket.send_json({
+                        "type": "comment_saved",
+                        "data": broadcast_data["data"]
+                    })
                     
                 except Exception as e:
-                    logger.error(f"Error saving comment: {e}")
+                    logger.error(f"Error saving comment: {e}", exc_info=True)
                     if db:
                         db.rollback()
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": f"コメントの保存に失敗しました: {str(e)}"
+                    })
                 finally:
                     if db:
                         db.close()
@@ -167,7 +197,7 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info("WebSocket disconnected")
         manager.disconnect(websocket)
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.error(f"WebSocket error: {e}", exc_info=True)
         manager.disconnect(websocket)
     finally:
         if db:
@@ -194,7 +224,7 @@ async def get_market_data(symbol: str, interval: str):
 async def get_comments(hours: int = 24, interval: str = None, db: Session = Depends(get_db)):
     """指定時間内のコメントを取得（時間足に応じてフィルタリング）"""
     try:
-        # 時間足ごとの集計期間を定義（分単位）
+        # 時間足ごとの集計期間を定義（時間単位）
         interval_hours = {
             "1m": 0.5,    # 30分
             "3m": 1,      # 1時間
@@ -212,13 +242,19 @@ async def get_comments(hours: int = 24, interval: str = None, db: Session = Depe
         
         # timezone-awareなdatetimeを使用
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        
+        # コメントを取得
         comments = db.query(Comment).filter(
             Comment.timestamp >= since
         ).order_by(Comment.timestamp.desc()).all()
         
         logger.info(f"Found {len(comments)} comments in the last {hours} hours for interval {interval}")
         
-        return {
+        # デバッグ用：最初の3件のコメントを詳細ログ
+        for i, c in enumerate(comments[:3]):
+            logger.info(f"Comment {i}: id={c.id}, timestamp={c.timestamp}, price={c.price}, content={c.content[:30]}")
+        
+        result = {
             "comments": [
                 {
                     "id": c.id,
@@ -230,8 +266,12 @@ async def get_comments(hours: int = 24, interval: str = None, db: Session = Depe
                 for c in comments
             ]
         }
+        
+        logger.info(f"Returning {len(result['comments'])} comments")
+        return result
+        
     except Exception as e:
-        logger.error(f"Error getting comments: {e}")
+        logger.error(f"Error getting comments: {e}", exc_info=True)
         return {"comments": []}
 
 @app.get("/api/sentiment")
