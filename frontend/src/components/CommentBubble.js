@@ -18,10 +18,6 @@ const CommentBubble = ({ group, chart, chartContainer }) => {
         const x = timeScale.timeToCoordinate(timestamp);
         const y = priceScale.priceToCoordinate(group.price);
         
-        // チャートコンテナの範囲内かチェック
-        const containerRect = chartContainer.getBoundingClientRect();
-        const chartRect = chartContainer.querySelector('.tv-lightweight-charts').getBoundingClientRect();
-        
         if (x !== null && y !== null && x >= 0 && y >= 0) {
           // チャート内の相対位置を計算
           const relativeX = x;
