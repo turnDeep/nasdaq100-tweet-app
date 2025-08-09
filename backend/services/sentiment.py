@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from models import Comment
 import re
 
@@ -10,7 +10,8 @@ class SentimentAnalyzer:
         
     def analyze_recent_comments(self, db: Session, hours: int = 1) -> dict:
         """直近のコメントからセンチメントを分析"""
-        since = datetime.utcnow() - timedelta(hours=hours)
+        # timezone-awareなdatetimeを使用
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
         comments = db.query(Comment).filter(Comment.timestamp >= since).all()
         
         buy_count = 0
