@@ -14,30 +14,53 @@ class SentimentAnalyzer:
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
         comments = db.query(Comment).filter(Comment.timestamp >= since).all()
         
+        return self._analyze_comments(comments)
+    
+    def analyze_all_comments(self, db: Session) -> dict:
+        """すべてのコメントからセンチメントを分析"""
+        comments = db.query(Comment).all()
+        return self._analyze_comments(comments)
+    
+    def _analyze_comments(self, comments) -> dict:
+        """コメントリストからセンチメントを分析"""
         buy_count = 0
         sell_count = 0
+        neutral_count = 0
         
         for comment in comments:
             content = comment.content.lower()
             
             # BUYキーワードチェック
-            if any(keyword in content for keyword in self.buy_keywords):
-                buy_count += 1
+            has_buy = any(keyword in content for keyword in self.buy_keywords)
             # SELLキーワードチェック
-            elif any(keyword in content for keyword in self.sell_keywords):
+            has_sell = any(keyword in content for keyword in self.sell_keywords)
+            
+            if has_buy and not has_sell:
+                buy_count += 1
+            elif has_sell and not has_buy:
                 sell_count += 1
+            else:
+                # どちらも含まれるか、どちらも含まれない場合は中立
+                neutral_count += 1
         
         total = buy_count + sell_count
         
         if total == 0:
+            # センチメントが判定できない場合は50:50
             return {
                 "buy_percentage": 50,
                 "sell_percentage": 50,
-                "total_comments": 0
+                "total_comments": len(comments),
+                "buy_count": buy_count,
+                "sell_count": sell_count,
+                "neutral_count": neutral_count
             }
         
         return {
             "buy_percentage": round((buy_count / total) * 100),
             "sell_percentage": round((sell_count / total) * 100),
-            "total_comments": total
+            "total_comments": len(comments),
+            "buy_count": buy_count,
+            "sell_count": sell_count,
+            "neutral_count": neutral_count
         }
