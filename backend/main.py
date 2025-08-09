@@ -74,18 +74,50 @@ async def startup_event():
     logger.info("Database initialized")
     logger.info(f"Backend running on port {os.getenv('PORT', 8000)}")
     logger.info("CORS enabled for all origins")
-    # マーケットデータの定期更新を開始
-    asyncio.create_task(market_data_updater())
     
-    # デバッグ用：起動時に既存のコメントを確認
+    # デモデータを作成（開発/テスト用）
     db = next(get_db())
     try:
-        comments = db.query(Comment).all()
-        logger.info(f"Found {len(comments)} existing comments in database")
-        for c in comments[:5]:  # 最初の5件を表示
+        # 既存のコメント数を確認
+        existing_count = db.query(Comment).count()
+        logger.info(f"Found {existing_count} existing comments in database")
+        
+        # デモデータがない場合は作成
+        if existing_count == 0:
+            logger.info("Creating demo comments...")
+            demo_comments = [
+                {"content": "ナスダック強気！🚀", "emotion_icon": "🚀", "price": 17100.50},
+                {"content": "この辺で買い増し検討中", "emotion_icon": "😊", "price": 17050.25},
+                {"content": "利確しました。様子見", "emotion_icon": "😎", "price": 17150.75},
+                {"content": "下落トレンドかも？", "emotion_icon": "😢", "price": 16950.00},
+                {"content": "長期的には上昇すると思う", "emotion_icon": "🤔", "price": 17000.00},
+            ]
+            
+            for i, demo in enumerate(demo_comments):
+                comment = Comment(
+                    timestamp=datetime.now(timezone.utc) - timedelta(minutes=i*10),
+                    price=Decimal(str(demo["price"])),
+                    content=demo["content"],
+                    emotion_icon=demo["emotion_icon"]
+                )
+                db.add(comment)
+            
+            db.commit()
+            logger.info(f"Created {len(demo_comments)} demo comments")
+            
+        # コメントを表示（デバッグ用）
+        comments = db.query(Comment).order_by(Comment.timestamp.desc()).limit(5).all()
+        for c in comments:
             logger.info(f"Comment {c.id}: timestamp={c.timestamp}, price={c.price}, content={c.content[:30]}")
+            
+    except Exception as e:
+        logger.error(f"Error in startup: {e}")
+        db.rollback()
     finally:
         db.close()
+    
+    # マーケットデータの定期更新を開始
+    asyncio.create_task(market_data_updater())
 
 async def market_data_updater():
     """マーケットデータを定期的に更新"""
@@ -155,11 +187,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     # 保存成功をログ
                     logger.info(f"Comment saved: ID={comment.id}, timestamp={comment.timestamp}, price={comment.price}, content={comment.content[:50]}...")
                     
-                    # 保存したコメントを確認
-                    saved_comment = db.query(Comment).filter(Comment.id == comment.id).first()
-                    if saved_comment:
-                        logger.info(f"Verified saved comment: {saved_comment.id}")
-                    
                     # 全クライアントにブロードキャスト
                     broadcast_data = {
                         "type": "new_comment",
@@ -172,7 +199,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         }
                     }
                     await manager.broadcast(broadcast_data)
-                    logger.info(f"Comment broadcasted: ID={broadcast_data['data']['id']}, timestamp={broadcast_data['data']['timestamp']}")
+                    logger.info(f"Comment broadcasted: ID={broadcast_data['data']['id']}")
                     
                     # 送信者に確認メッセージを送信
                     await websocket.send_json({
@@ -222,36 +249,15 @@ async def get_market_data(symbol: str, interval: str):
 
 @app.get("/api/comments")
 async def get_comments(hours: int = 24, interval: str = None, db: Session = Depends(get_db)):
-    """指定時間内のコメントを取得（時間足に応じてフィルタリング）"""
+    """コメントを取得（フィルタリングを緩和）"""
     try:
-        # 時間足ごとの集計期間を定義（時間単位）
-        interval_hours = {
-            "1m": 0.5,    # 30分
-            "3m": 1,      # 1時間
-            "5m": 2,      # 2時間
-            "15m": 4,     # 4時間
-            "1H": 12,     # 12時間
-            "4H": 24,     # 24時間
-            "1D": 168,    # 1週間
-            "1W": 720     # 30日
-        }
+        # すべてのコメントを取得（フィルタリングなし）
+        comments = db.query(Comment).order_by(Comment.timestamp.desc()).all()
         
-        # intervalが指定されている場合は、それに応じた期間を使用
-        if interval and interval in interval_hours:
-            hours = interval_hours[interval]
+        logger.info(f"Found {len(comments)} total comments in database")
         
-        # timezone-awareなdatetimeを使用
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
-        
-        # コメントを取得
-        comments = db.query(Comment).filter(
-            Comment.timestamp >= since
-        ).order_by(Comment.timestamp.desc()).all()
-        
-        logger.info(f"Found {len(comments)} comments in the last {hours} hours for interval {interval}")
-        
-        # デバッグ用：最初の3件のコメントを詳細ログ
-        for i, c in enumerate(comments[:3]):
+        # デバッグ用：最初の5件のコメントを詳細ログ
+        for i, c in enumerate(comments[:5]):
             logger.info(f"Comment {i}: id={c.id}, timestamp={c.timestamp}, price={c.price}, content={c.content[:30]}")
         
         result = {
@@ -276,22 +282,10 @@ async def get_comments(hours: int = 24, interval: str = None, db: Session = Depe
 
 @app.get("/api/sentiment")
 async def get_sentiment(interval: str = None, db: Session = Depends(get_db)):
-    """センチメント分析結果を取得（時間足に応じた期間）"""
+    """センチメント分析結果を取得"""
     try:
-        # 時間足ごとの集計期間を定義（時間単位）
-        interval_hours = {
-            "1m": 0.5,    # 30分
-            "3m": 1,      # 1時間
-            "5m": 2,      # 2時間
-            "15m": 4,     # 4時間
-            "1H": 12,     # 12時間
-            "4H": 24,     # 24時間
-            "1D": 168,    # 1週間
-            "1W": 720     # 30日
-        }
-        
-        hours = interval_hours.get(interval, 1)
-        analysis = sentiment_analyzer.analyze_recent_comments(db, hours)
+        # すべてのコメントを対象にセンチメント分析
+        analysis = sentiment_analyzer.analyze_all_comments(db)
         return analysis
     except Exception as e:
         logger.error(f"Error getting sentiment: {e}")
