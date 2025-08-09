@@ -2,7 +2,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depe
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import asyncio
 from typing import List, Dict
@@ -113,14 +113,14 @@ async def websocket_endpoint(websocket: WebSocket):
                     content = str(data.get("content", "")).strip()
                     emotion_icon = data.get("emotion_icon")
                     
-                    # タイムスタンプの処理
-                    # クライアントから送られてきた場合はそれを使用、なければ現在時刻-15分
-                    if "timestamp" in data:
+                    # タイムスタンプの処理を改善
+                    if "timestamp" in data and data["timestamp"]:
                         # クライアントから送られたタイムスタンプ（秒単位のUNIXタイム）
-                        timestamp = datetime.fromtimestamp(data["timestamp"])
+                        # timezone-awareなdatetimeに変換
+                        timestamp = datetime.fromtimestamp(data["timestamp"], tz=timezone.utc)
                     else:
-                        # 15分遅延を考慮（Yahoo Financeのディレイに合わせる）
-                        timestamp = datetime.utcnow() - timedelta(minutes=15)
+                        # 現在時刻をUTCで取得（timezone-aware）
+                        timestamp = datetime.now(timezone.utc)
                     
                     if not content:
                         logger.warning("Empty comment content received")
@@ -210,7 +210,8 @@ async def get_comments(hours: int = 24, interval: str = None, db: Session = Depe
         if interval and interval in interval_hours:
             hours = interval_hours[interval]
         
-        since = datetime.utcnow() - timedelta(hours=hours)
+        # timezone-awareなdatetimeを使用
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
         comments = db.query(Comment).filter(
             Comment.timestamp >= since
         ).order_by(Comment.timestamp.desc()).all()
@@ -221,7 +222,7 @@ async def get_comments(hours: int = 24, interval: str = None, db: Session = Depe
             "comments": [
                 {
                     "id": c.id,
-                    "timestamp": c.timestamp.isoformat(),
+                    "timestamp": c.timestamp.isoformat() if c.timestamp else datetime.now(timezone.utc).isoformat(),
                     "price": float(c.price),
                     "content": c.content,
                     "emotion_icon": c.emotion_icon
