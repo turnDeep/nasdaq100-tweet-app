@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 
 const CommentBubble = ({ group, chart, chartContainer, chartData, placedBubbles, onPlacement }) => {
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -12,10 +12,9 @@ const CommentBubble = ({ group, chart, chartContainer, chartData, placedBubbles,
   const BUBBLE_WIDTH = 200;
   const BUBBLE_HEIGHT = 60;
   const MARGIN = 20; // ローソク足との余白
-  const LINE_MARGIN = 5; // アンカーラインの余白
 
   // 8方向の候補位置を計算
-  const calculateCandidatePositions = (anchorX, anchorY) => {
+  const calculateCandidatePositions = useCallback((anchorX, anchorY) => {
     return [
       { 
         direction: 'top',
@@ -66,16 +65,21 @@ const CommentBubble = ({ group, chart, chartContainer, chartData, placedBubbles,
         score: 3
       }
     ];
-  };
+  }, [BUBBLE_WIDTH, BUBBLE_HEIGHT, MARGIN]);
 
   // ローソク足との衝突判定
-  const checkCandleCollision = (candidateBox, timestamp) => {
+  const checkCandleCollision = useCallback((candidateBox, timestamp) => {
     if (!chart || !chartData || chartData.length === 0) return false;
 
-    const timeScale = chart.timeScale();
-    const priceScale = chart.priceScale('right');
-
     try {
+      const timeScale = chart.timeScale();
+      const priceScale = chart.priceScale(); // 引数なしで取得
+      
+      if (!timeScale || !priceScale) {
+        console.warn('CommentBubble: Scale not available');
+        return false;
+      }
+
       // 候補ボックスの時間・価格範囲を計算
       const boxLeft = candidateBox.x;
       const boxRight = candidateBox.x + BUBBLE_WIDTH;
@@ -88,7 +92,7 @@ const CommentBubble = ({ group, chart, chartContainer, chartData, placedBubbles,
       const priceTop = priceScale.coordinateToPrice(boxTop);
       const priceBottom = priceScale.coordinateToPrice(boxBottom);
 
-      if (!timeLeft || !timeRight || priceTop === null || priceBottom === null) {
+      if (timeLeft === null || timeRight === null || priceTop === null || priceBottom === null) {
         return false;
       }
 
@@ -112,10 +116,10 @@ const CommentBubble = ({ group, chart, chartContainer, chartData, placedBubbles,
       console.error('CommentBubble: Error checking candle collision:', error);
       return false;
     }
-  };
+  }, [chart, chartData, BUBBLE_WIDTH, BUBBLE_HEIGHT]);
 
   // 他のバブルとの衝突判定
-  const checkBubbleCollision = (candidateBox) => {
+  const checkBubbleCollision = useCallback((candidateBox) => {
     if (!placedBubbles || placedBubbles.length === 0) return false;
 
     const boxLeft = candidateBox.x;
@@ -140,10 +144,10 @@ const CommentBubble = ({ group, chart, chartContainer, chartData, placedBubbles,
     }
 
     return false; // 衝突なし
-  };
+  }, [placedBubbles, group, BUBBLE_WIDTH, BUBBLE_HEIGHT]);
 
   // 最適な配置位置を決定
-  const findOptimalPosition = (anchorX, anchorY, timestamp) => {
+  const findOptimalPosition = useCallback((anchorX, anchorY, timestamp) => {
     const candidates = calculateCandidatePositions(anchorX, anchorY);
     let bestCandidate = null;
     let bestScore = -Infinity;
@@ -176,20 +180,29 @@ const CommentBubble = ({ group, chart, chartContainer, chartData, placedBubbles,
       }
     }
 
-    // 最適な位置が見つからない場合はデフォルト位置
+    // 最適な位置が見つからない場合はデフォルト位置（シンプルな配置）
     if (!bestCandidate) {
       bestCandidate = {
-        direction: 'top-right',
-        x: Math.min(anchorX + MARGIN, chartContainer.clientWidth - BUBBLE_WIDTH - 10),
+        direction: 'top',
+        x: Math.min(Math.max(10, anchorX - BUBBLE_WIDTH / 2), chartContainer.clientWidth - BUBBLE_WIDTH - 10),
         y: Math.max(10, anchorY - BUBBLE_HEIGHT - MARGIN)
       };
     }
 
     return bestCandidate;
-  };
+  }, [
+    calculateCandidatePositions,
+    checkCandleCollision,
+    checkBubbleCollision,
+    chartContainer,
+    BUBBLE_WIDTH,
+    BUBBLE_HEIGHT,
+    MARGIN
+  ]);
 
   useEffect(() => {
     if (!chart || !chartContainer || !group) {
+      console.log('CommentBubble: Missing required props');
       setIsVisible(false);
       return;
     }
@@ -197,8 +210,15 @@ const CommentBubble = ({ group, chart, chartContainer, chartData, placedBubbles,
     const updatePosition = () => {
       try {
         const timeScale = chart.timeScale();
-        const priceScale = chart.priceScale('right');
+        const priceScale = chart.priceScale(); // 引数なしで取得
         
+        if (!timeScale || !priceScale) {
+          console.warn('CommentBubble: Chart scales not available');
+          setIsVisible(false);
+          return;
+        }
+        
+        // タイムスタンプの処理
         let timestamp;
         if (typeof group.timestamp === 'number') {
           timestamp = group.timestamp > 1000000000000 ? Math.floor(group.timestamp / 1000) : group.timestamp;
@@ -217,53 +237,56 @@ const CommentBubble = ({ group, chart, chartContainer, chartData, placedBubbles,
           return;
         }
         
-<<<<<<< HEAD
+        // デバッグログ
+        console.log('CommentBubble: Processing comment at timestamp:', timestamp, 'price:', group.price);
+        
         // アンカー座標を計算
-=======
-        // 座標を計算
->>>>>>> e279584c1cd7837ca5923f5a6218a81da61ad957
         const x = timeScale.timeToCoordinate(timestamp);
         const y = priceScale.priceToCoordinate(group.price);
         
+        console.log('CommentBubble: Coordinates - x:', x, 'y:', y);
+        
         // 座標が取得できない場合は非表示
-        if (x === null || y === null) {
+        if (x === null || y === null || x === undefined || y === undefined) {
+          console.warn('CommentBubble: Could not get coordinates for timestamp:', timestamp, 'price:', group.price);
           setIsVisible(false);
           return;
         }
 
-<<<<<<< HEAD
         // 表示範囲チェック
-=======
-        // 表示範囲チェックも追加
->>>>>>> e279584c1cd7837ca5923f5a6218a81da61ad957
         const visibleRange = timeScale.getVisibleRange();
         if (visibleRange && (timestamp < visibleRange.from || timestamp > visibleRange.to)) {
+          console.log('CommentBubble: Comment outside visible range');
           setIsVisible(false);
           return;
         }
 
-<<<<<<< HEAD
         // アンカー位置を保存
-        setAnchorPosition({ x: Math.round(x), y: Math.round(y) });
+        const roundedX = Math.round(x);
+        const roundedY = Math.round(y);
+        setAnchorPosition({ x: roundedX, y: roundedY });
 
-        // 最適な配置位置を計算
-        const optimal = findOptimalPosition(x, y, timestamp);
-        setPosition({ x: Math.round(optimal.x), y: Math.round(optimal.y) });
-        setPlacement(optimal.direction);
+        // 最適な配置位置を計算（シンプルなバージョンに変更）
+        // まずはシンプルに上に配置を試みる
+        const simplePosition = {
+          x: Math.round(Math.min(Math.max(10, roundedX - BUBBLE_WIDTH / 2), chartContainer.clientWidth - BUBBLE_WIDTH - 10)),
+          y: Math.round(Math.max(10, roundedY - BUBBLE_HEIGHT - MARGIN))
+        };
+        
+        setPosition(simplePosition);
+        setPlacement('top');
 
         // 配置情報を親コンポーネントに通知
         if (onPlacement) {
           onPlacement(group.comments[0]?.id || `group-${timestamp}`, {
-            x: optimal.x,
-            y: optimal.y,
+            x: simplePosition.x,
+            y: simplePosition.y,
             width: BUBBLE_WIDTH,
             height: BUBBLE_HEIGHT
           });
         }
 
-=======
-        setPosition({ x: Math.round(x), y: Math.round(y) });
->>>>>>> e279584c1cd7837ca5923f5a6218a81da61ad957
+        console.log('CommentBubble: Setting visible at position:', simplePosition);
         setIsVisible(true);
 
       } catch (error) {
@@ -272,15 +295,22 @@ const CommentBubble = ({ group, chart, chartContainer, chartData, placedBubbles,
       }
     };
 
+    // 初回実行
     updatePosition();
     
+    // チャートの表示範囲変更を監視
     const timeScale = chart.timeScale();
-    timeScale.subscribeVisibleTimeRangeChange(updatePosition);
+    const handleVisibleRangeChange = () => {
+      console.log('CommentBubble: Visible range changed, updating position');
+      updatePosition();
+    };
+    
+    timeScale.subscribeVisibleTimeRangeChange(handleVisibleRangeChange);
     
     return () => {
-      timeScale.unsubscribeVisibleTimeRangeChange(updatePosition);
+      timeScale.unsubscribeVisibleTimeRangeChange(handleVisibleRangeChange);
     };
-  }, [group, chart, chartContainer, chartData, placedBubbles, onPlacement]);
+  }, [group, chart, chartContainer, onPlacement, findOptimalPosition, BUBBLE_WIDTH, BUBBLE_HEIGHT, MARGIN]);
 
   // アンカーラインの端点を計算
   const getLineEndpoint = () => {
@@ -307,11 +337,14 @@ const CommentBubble = ({ group, chart, chartContainer, chartData, placedBubbles,
   };
 
   if (!isVisible) {
+    console.log('CommentBubble: Not visible, not rendering');
     return null;
   }
 
   const lineEnd = getLineEndpoint();
   const comment = group.comments[0];
+
+  console.log('CommentBubble: Rendering at position:', position, 'anchor:', anchorPosition);
 
   return (
     <>
