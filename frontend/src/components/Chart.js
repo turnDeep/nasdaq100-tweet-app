@@ -100,7 +100,10 @@ const Chart = ({ data, comments, onCandleClick }) => {
     if (!visibleRange) {
         console.log('Chart: Visible range not available yet.');
         setVisibleComments([]);
+<<<<<<< HEAD
         setPlacedBubbles([]);
+=======
+>>>>>>> e279584c1cd7837ca5923f5a6218a81da61ad957
         return;
     }
     

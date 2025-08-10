@@ -217,7 +217,11 @@ const CommentBubble = ({ group, chart, chartContainer, chartData, placedBubbles,
           return;
         }
         
+<<<<<<< HEAD
         // アンカー座標を計算
+=======
+        // 座標を計算
+>>>>>>> e279584c1cd7837ca5923f5a6218a81da61ad957
         const x = timeScale.timeToCoordinate(timestamp);
         const y = priceScale.priceToCoordinate(group.price);
         
@@ -227,13 +231,18 @@ const CommentBubble = ({ group, chart, chartContainer, chartData, placedBubbles,
           return;
         }
 
+<<<<<<< HEAD
         // 表示範囲チェック
+=======
+        // 表示範囲チェックも追加
+>>>>>>> e279584c1cd7837ca5923f5a6218a81da61ad957
         const visibleRange = timeScale.getVisibleRange();
         if (visibleRange && (timestamp < visibleRange.from || timestamp > visibleRange.to)) {
           setIsVisible(false);
           return;
         }
 
+<<<<<<< HEAD
         // アンカー位置を保存
         setAnchorPosition({ x: Math.round(x), y: Math.round(y) });
 
@@ -252,6 +261,9 @@ const CommentBubble = ({ group, chart, chartContainer, chartData, placedBubbles,
           });
         }
 
+=======
+        setPosition({ x: Math.round(x), y: Math.round(y) });
+>>>>>>> e279584c1cd7837ca5923f5a6218a81da61ad957
         setIsVisible(true);
 
       } catch (error) {
