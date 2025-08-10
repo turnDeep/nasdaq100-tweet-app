@@ -95,6 +95,16 @@ const Chart = ({ data, comments, onCandleClick }) => {
     }
 
     const timeScale = chartRef.current.timeScale();
+    const priceScale = chartRef.current.priceScale();
+    
+    // スケールが利用可能か確認
+    if (!timeScale || !priceScale) {
+      console.log('Chart: Scales not available yet');
+      setVisibleComments([]);
+      setPlacedBubbles([]);
+      return;
+    }
+    
     const visibleRange = timeScale.getVisibleRange();
 
     if (!visibleRange) {
@@ -113,7 +123,12 @@ const Chart = ({ data, comments, onCandleClick }) => {
 
     try {
       // デバッグログを追加して範囲チェックを可視化
-      console.log(`Chart: Debug - Visible range from ${visibleRange.from} to ${visibleRange.to}`);
+      console.log(`Chart: Visible range from ${visibleRange.from} to ${visibleRange.to}`);
+      console.log('Chart: First few comments:', comments.slice(0, 3).map(c => ({
+        id: c.id,
+        timestamp: c.timestamp,
+        price: c.price
+      })));
 
       const filteredComments = comments.filter(comment => {
         let commentTimestamp;
@@ -126,10 +141,16 @@ const Chart = ({ data, comments, onCandleClick }) => {
         }
 
         const isInRange = commentTimestamp >= visibleRange.from && commentTimestamp <= visibleRange.to;
+        
+        // デバッグ用：最初の数件についてrange判定結果を出力
+        if (comments.indexOf(comment) < 3) {
+          console.log(`Chart: Comment ${comment.id} - timestamp: ${commentTimestamp}, inRange: ${isInRange}`);
+        }
+        
         return isInRange;
       });
       
-      console.log(`Chart: Displaying ${filteredComments.length} of ${comments.length} comments.`);
+      console.log(`Chart: Filtered ${filteredComments.length} of ${comments.length} comments in visible range`);
 
       // 表示範囲内のコメントのみ集約
       const aggregated = aggregateComments(filteredComments);
@@ -394,12 +415,15 @@ const Chart = ({ data, comments, onCandleClick }) => {
     if (seriesRef.current && data && data.length > 0) {
       try {
         console.log('Chart: Updating chart with', data.length, 'candles');
+        console.log('Chart: First candle:', data[0]);
+        console.log('Chart: Last candle:', data[data.length - 1]);
+        
         seriesRef.current.setData(data);
         
-        // データ更新後にコメントの表示を更新
+        // データ更新後にコメントの表示を更新（少し遅延を入れて確実にチャートが更新されてから）
         setTimeout(() => {
           updateVisibleComments();
-        }, 100);
+        }, 200);
       } catch (error) {
         console.error('Chart: Error setting chart data:', error);
       }
@@ -409,7 +433,16 @@ const Chart = ({ data, comments, onCandleClick }) => {
   // コメント更新時の処理
   useEffect(() => {
     console.log('Chart: Comments prop changed, received', comments?.length || 0, 'comments');
-    updateVisibleComments();
+    if (comments && comments.length > 0) {
+      console.log('Chart: Sample comment:', comments[0]);
+    }
+    
+    // チャートが準備できてから更新
+    if (chartRef.current) {
+      setTimeout(() => {
+        updateVisibleComments();
+      }, 100);
+    }
   }, [comments, updateVisibleComments]);
 
   console.log('Chart: Rendering with', visibleComments.length, 'visible comment groups');
@@ -444,7 +477,7 @@ const Chart = ({ data, comments, onCandleClick }) => {
       >
         {visibleComments.map((group, index) => {
           const key = `comment-group-${group.comments[0]?.id || 'unknown'}-${index}`;
-          console.log('Chart: Rendering comment group with key:', key);
+          console.log('Chart: Rendering comment group with key:', key, 'group:', group);
           
           return (
             <CommentBubble
