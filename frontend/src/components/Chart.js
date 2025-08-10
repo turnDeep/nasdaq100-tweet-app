@@ -91,6 +91,15 @@ const Chart = ({ data, comments, onCandleClick }) => {
       setVisibleComments([]);
       return;
     }
+
+    const timeScale = chartRef.current.timeScale();
+    const visibleRange = timeScale.getVisibleRange();
+
+    if (!visibleRange) {
+        console.log('Chart: Visible range not available yet.');
+        setVisibleComments([]);
+        return;
+    }
     
     if (!comments || comments.length === 0) {
       console.log('Chart: No comments to display');
@@ -99,11 +108,27 @@ const Chart = ({ data, comments, onCandleClick }) => {
     }
 
     try {
-      // すべてのコメントを表示（フィルタリングを一時的に無効化）
-      console.log('Chart: Processing all', comments.length, 'comments');
+      // デバッグログを追加して範囲チェックを可視化
+      console.log(`Chart: Debug - Visible range from ${visibleRange.from} to ${visibleRange.to}`);
+
+      const filteredComments = comments.filter(comment => {
+        let commentTimestamp;
+        if (typeof comment.timestamp === 'number') {
+            commentTimestamp = comment.timestamp > 1000000000000 ? Math.floor(comment.timestamp / 1000) : comment.timestamp;
+        } else if (typeof comment.timestamp === 'string') {
+            commentTimestamp = Math.floor(new Date(comment.timestamp).getTime() / 1000);
+        } else {
+            return false; // Invalid timestamp format
+        }
+
+        const isInRange = commentTimestamp >= visibleRange.from && commentTimestamp <= visibleRange.to;
+        return isInRange;
+      });
       
-      // コメントを集約
-      const aggregated = aggregateComments(comments);
+      console.log(`Chart: Displaying ${filteredComments.length} of ${comments.length} comments.`);
+
+      // 表示範囲内のコメントのみ集約
+      const aggregated = aggregateComments(filteredComments);
       console.log('Chart: Setting', aggregated.length, 'visible comment groups');
       setVisibleComments(aggregated);
       

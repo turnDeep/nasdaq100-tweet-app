@@ -7,7 +7,7 @@ const CommentBubble = ({ group, chart, chartContainer }) => {
 
   useEffect(() => {
     if (!chart || !chartContainer || !group) {
-      console.log('CommentBubble: Chart, container or group not ready');
+      setIsVisible(false);
       return;
     }
 
@@ -16,23 +16,10 @@ const CommentBubble = ({ group, chart, chartContainer }) => {
         const timeScale = chart.timeScale();
         const priceScale = chart.priceScale('right');
         
-        // タイムスタンプの処理 - 様々な形式に対応
         let timestamp;
-        
-        // groupのタイムスタンプを確認
-        console.log('CommentBubble: Processing timestamp:', group.timestamp, 'Type:', typeof group.timestamp);
-        
         if (typeof group.timestamp === 'number') {
-          // 数値の場合
-          if (group.timestamp > 1000000000000) {
-            // ミリ秒の場合は秒に変換
-            timestamp = Math.floor(group.timestamp / 1000);
-          } else {
-            // すでに秒単位
-            timestamp = group.timestamp;
-          }
+          timestamp = group.timestamp > 1000000000000 ? Math.floor(group.timestamp / 1000) : group.timestamp;
         } else if (typeof group.timestamp === 'string') {
-          // 文字列の場合
           const parsed = Date.parse(group.timestamp);
           if (!isNaN(parsed)) {
             timestamp = Math.floor(parsed / 1000);
@@ -47,83 +34,39 @@ const CommentBubble = ({ group, chart, chartContainer }) => {
           return;
         }
         
-        // 現在の表示範囲を取得
-        const visibleRange = timeScale.getVisibleRange();
-        console.log('CommentBubble: Visible range:', visibleRange);
-        console.log('CommentBubble: Comment timestamp (seconds):', timestamp);
-        console.log('CommentBubble: Comment price:', group.price);
-        
-        // 表示範囲内かチェック（デバッグのため一時的に無効化）
-        // if (visibleRange && (timestamp < visibleRange.from || timestamp > visibleRange.to)) {
-        //   console.log('CommentBubble: Comment is outside visible range');
-        //   setIsVisible(false);
-        //   return;
-        // }
-        
         // 座標を計算
         const x = timeScale.timeToCoordinate(timestamp);
         const y = priceScale.priceToCoordinate(group.price);
         
-        console.log('CommentBubble: Calculated coordinates - x:', x, 'y:', y);
-        
-        // 座標が有効かチェック
-        if (x !== null && y !== null && !isNaN(x) && !isNaN(y) && x >= 0 && y >= 0) {
-          setPosition({ x: Math.round(x), y: Math.round(y) });
-          setIsVisible(true);
-          console.log('CommentBubble: Setting visible at position:', { x: Math.round(x), y: Math.round(y) });
-        } else {
-          console.log('CommentBubble: Invalid coordinates, hiding comment');
-          // デバッグのため、画面中央に表示してみる
-          const debugX = chartContainer.clientWidth / 2;
-          const debugY = chartContainer.clientHeight / 2;
-          setPosition({ x: debugX, y: debugY });
-          setIsVisible(true);
-          console.log('CommentBubble: Debug position set to center:', { x: debugX, y: debugY });
+        // 座標が取得できない場合は非表示
+        if (x === null || y === null) {
+          setIsVisible(false);
+          return;
         }
+
+        // 表示範囲チェックも追加
+        const visibleRange = timeScale.getVisibleRange();
+        if (visibleRange && (timestamp < visibleRange.from || timestamp > visibleRange.to)) {
+          setIsVisible(false);
+          return;
+        }
+
+        setPosition({ x: Math.round(x), y: Math.round(y) });
+        setIsVisible(true);
+
       } catch (error) {
         console.error('CommentBubble: Error updating position:', error);
-        // エラー時もデバッグ表示
-        const debugX = 100;
-        const debugY = 100;
-        setPosition({ x: debugX, y: debugY });
-        setIsVisible(true);
+        setIsVisible(false);
       }
     };
 
-    // 初回更新
     updatePosition();
     
-    // チャートの更新を監視
-    const intervalId = setInterval(updatePosition, 1000); // 1秒ごとに位置を更新
-    
-    // チャートイベントの監視
-    let unsubscribeTimeRange;
-    let unsubscribeCrosshair;
-    
-    try {
-      const timeScale = chart.timeScale();
-      unsubscribeTimeRange = timeScale.subscribeVisibleTimeRangeChange(updatePosition);
-      unsubscribeCrosshair = chart.subscribeCrosshairMove(updatePosition);
-    } catch (error) {
-      console.error('CommentBubble: Error subscribing to events:', error);
-    }
+    const timeScale = chart.timeScale();
+    timeScale.subscribeVisibleTimeRangeChange(updatePosition);
     
     return () => {
-      clearInterval(intervalId);
-      if (unsubscribeTimeRange) {
-        try {
-          unsubscribeTimeRange();
-        } catch (e) {
-          console.error('CommentBubble: Error unsubscribing from time range:', e);
-        }
-      }
-      if (unsubscribeCrosshair) {
-        try {
-          unsubscribeCrosshair();
-        } catch (e) {
-          console.error('CommentBubble: Error unsubscribing from crosshair:', e);
-        }
-      }
+      timeScale.unsubscribeVisibleTimeRangeChange(updatePosition);
     };
   }, [group, chart, chartContainer]);
 
