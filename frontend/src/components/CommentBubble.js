@@ -1,13 +1,196 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 
-const CommentBubble = ({ group, chart, chartContainer }) => {
+const CommentBubble = ({ group, chart, chartContainer, chartData, placedBubbles, onPlacement }) => {
   const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [anchorPosition, setAnchorPosition] = useState({ x: 0, y: 0 });
   const [isVisible, setIsVisible] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const [placement, setPlacement] = useState('top'); // 配置方向
+  const bubbleRef = useRef(null);
+
+  // バブルのサイズ（推定値）
+  const BUBBLE_WIDTH = 200;
+  const BUBBLE_HEIGHT = 60;
+  const MARGIN = 20; // ローソク足との余白
+  const LINE_MARGIN = 5; // アンカーラインの余白
+
+  // 8方向の候補位置を計算
+  const calculateCandidatePositions = (anchorX, anchorY) => {
+    return [
+      { 
+        direction: 'top',
+        x: anchorX - BUBBLE_WIDTH / 2,
+        y: anchorY - BUBBLE_HEIGHT - MARGIN,
+        score: 10 // 優先度高
+      },
+      {
+        direction: 'bottom',
+        x: anchorX - BUBBLE_WIDTH / 2,
+        y: anchorY + MARGIN,
+        score: 10 // 優先度高
+      },
+      {
+        direction: 'left',
+        x: anchorX - BUBBLE_WIDTH - MARGIN,
+        y: anchorY - BUBBLE_HEIGHT / 2,
+        score: 5
+      },
+      {
+        direction: 'right',
+        x: anchorX + MARGIN,
+        y: anchorY - BUBBLE_HEIGHT / 2,
+        score: 5
+      },
+      {
+        direction: 'top-left',
+        x: anchorX - BUBBLE_WIDTH - MARGIN,
+        y: anchorY - BUBBLE_HEIGHT - MARGIN,
+        score: 3
+      },
+      {
+        direction: 'top-right',
+        x: anchorX + MARGIN,
+        y: anchorY - BUBBLE_HEIGHT - MARGIN,
+        score: 3
+      },
+      {
+        direction: 'bottom-left',
+        x: anchorX - BUBBLE_WIDTH - MARGIN,
+        y: anchorY + MARGIN,
+        score: 3
+      },
+      {
+        direction: 'bottom-right',
+        x: anchorX + MARGIN,
+        y: anchorY + MARGIN,
+        score: 3
+      }
+    ];
+  };
+
+  // ローソク足との衝突判定
+  const checkCandleCollision = (candidateBox, timestamp) => {
+    if (!chart || !chartData || chartData.length === 0) return false;
+
+    const timeScale = chart.timeScale();
+    const priceScale = chart.priceScale('right');
+
+    try {
+      // 候補ボックスの時間・価格範囲を計算
+      const boxLeft = candidateBox.x;
+      const boxRight = candidateBox.x + BUBBLE_WIDTH;
+      const boxTop = candidateBox.y;
+      const boxBottom = candidateBox.y + BUBBLE_HEIGHT;
+
+      // 座標から時間・価格への変換
+      const timeLeft = timeScale.coordinateToTime(boxLeft);
+      const timeRight = timeScale.coordinateToTime(boxRight);
+      const priceTop = priceScale.coordinateToPrice(boxTop);
+      const priceBottom = priceScale.coordinateToPrice(boxBottom);
+
+      if (!timeLeft || !timeRight || priceTop === null || priceBottom === null) {
+        return false;
+      }
+
+      // 表示範囲内のローソク足をチェック
+      for (const candle of chartData) {
+        // 時間範囲のチェック
+        if (candle.time < timeLeft || candle.time > timeRight) continue;
+
+        // 価格範囲のチェック（高値と安値）
+        const candleTop = Math.max(candle.high, candle.open, candle.close);
+        const candleBottom = Math.min(candle.low, candle.open, candle.close);
+
+        // 衝突判定
+        if (!(priceBottom > candleTop || priceTop < candleBottom)) {
+          return true; // 衝突している
+        }
+      }
+
+      return false; // 衝突なし
+    } catch (error) {
+      console.error('CommentBubble: Error checking candle collision:', error);
+      return false;
+    }
+  };
+
+  // 他のバブルとの衝突判定
+  const checkBubbleCollision = (candidateBox) => {
+    if (!placedBubbles || placedBubbles.length === 0) return false;
+
+    const boxLeft = candidateBox.x;
+    const boxRight = candidateBox.x + BUBBLE_WIDTH;
+    const boxTop = candidateBox.y;
+    const boxBottom = candidateBox.y + BUBBLE_HEIGHT;
+
+    for (const bubble of placedBubbles) {
+      // 自分自身はスキップ
+      if (bubble.id === group.comments[0]?.id) continue;
+
+      const bubbleLeft = bubble.x;
+      const bubbleRight = bubble.x + bubble.width;
+      const bubbleTop = bubble.y;
+      const bubbleBottom = bubble.y + bubble.height;
+
+      // 衝突判定
+      if (!(boxRight < bubbleLeft || boxLeft > bubbleRight ||
+            boxBottom < bubbleTop || boxTop > bubbleBottom)) {
+        return true; // 衝突している
+      }
+    }
+
+    return false; // 衝突なし
+  };
+
+  // 最適な配置位置を決定
+  const findOptimalPosition = (anchorX, anchorY, timestamp) => {
+    const candidates = calculateCandidatePositions(anchorX, anchorY);
+    let bestCandidate = null;
+    let bestScore = -Infinity;
+
+    for (const candidate of candidates) {
+      // 画面内に収まるかチェック
+      if (candidate.x < 0 || candidate.y < 0 ||
+          candidate.x + BUBBLE_WIDTH > chartContainer.clientWidth ||
+          candidate.y + BUBBLE_HEIGHT > chartContainer.clientHeight) {
+        continue;
+      }
+
+      // 衝突判定
+      const candleCollision = checkCandleCollision(candidate, timestamp);
+      const bubbleCollision = checkBubbleCollision(candidate);
+
+      if (!candleCollision && !bubbleCollision) {
+        // 距離によるスコア調整
+        const distance = Math.sqrt(
+          Math.pow(candidate.x + BUBBLE_WIDTH/2 - anchorX, 2) +
+          Math.pow(candidate.y + BUBBLE_HEIGHT/2 - anchorY, 2)
+        );
+        const distanceScore = 100 / (1 + distance * 0.01);
+        const totalScore = candidate.score + distanceScore;
+
+        if (totalScore > bestScore) {
+          bestScore = totalScore;
+          bestCandidate = candidate;
+        }
+      }
+    }
+
+    // 最適な位置が見つからない場合はデフォルト位置
+    if (!bestCandidate) {
+      bestCandidate = {
+        direction: 'top-right',
+        x: Math.min(anchorX + MARGIN, chartContainer.clientWidth - BUBBLE_WIDTH - 10),
+        y: Math.max(10, anchorY - BUBBLE_HEIGHT - MARGIN)
+      };
+    }
+
+    return bestCandidate;
+  };
 
   useEffect(() => {
     if (!chart || !chartContainer || !group) {
-      console.log('CommentBubble: Chart, container or group not ready');
+      setIsVisible(false);
       return;
     }
 
@@ -16,23 +199,10 @@ const CommentBubble = ({ group, chart, chartContainer }) => {
         const timeScale = chart.timeScale();
         const priceScale = chart.priceScale('right');
         
-        // タイムスタンプの処理 - 様々な形式に対応
         let timestamp;
-        
-        // groupのタイムスタンプを確認
-        console.log('CommentBubble: Processing timestamp:', group.timestamp, 'Type:', typeof group.timestamp);
-        
         if (typeof group.timestamp === 'number') {
-          // 数値の場合
-          if (group.timestamp > 1000000000000) {
-            // ミリ秒の場合は秒に変換
-            timestamp = Math.floor(group.timestamp / 1000);
-          } else {
-            // すでに秒単位
-            timestamp = group.timestamp;
-          }
+          timestamp = group.timestamp > 1000000000000 ? Math.floor(group.timestamp / 1000) : group.timestamp;
         } else if (typeof group.timestamp === 'string') {
-          // 文字列の場合
           const parsed = Date.parse(group.timestamp);
           if (!isNaN(parsed)) {
             timestamp = Math.floor(parsed / 1000);
@@ -47,196 +217,176 @@ const CommentBubble = ({ group, chart, chartContainer }) => {
           return;
         }
         
-        // 現在の表示範囲を取得
-        const visibleRange = timeScale.getVisibleRange();
-        console.log('CommentBubble: Visible range:', visibleRange);
-        console.log('CommentBubble: Comment timestamp (seconds):', timestamp);
-        console.log('CommentBubble: Comment price:', group.price);
-        
-        // 表示範囲内かチェック（デバッグのため一時的に無効化）
-        // if (visibleRange && (timestamp < visibleRange.from || timestamp > visibleRange.to)) {
-        //   console.log('CommentBubble: Comment is outside visible range');
-        //   setIsVisible(false);
-        //   return;
-        // }
-        
-        // 座標を計算
+        // アンカー座標を計算
         const x = timeScale.timeToCoordinate(timestamp);
         const y = priceScale.priceToCoordinate(group.price);
         
-        console.log('CommentBubble: Calculated coordinates - x:', x, 'y:', y);
-        
-        // 座標が有効かチェック
-        if (x !== null && y !== null && !isNaN(x) && !isNaN(y) && x >= 0 && y >= 0) {
-          setPosition({ x: Math.round(x), y: Math.round(y) });
-          setIsVisible(true);
-          console.log('CommentBubble: Setting visible at position:', { x: Math.round(x), y: Math.round(y) });
-        } else {
-          console.log('CommentBubble: Invalid coordinates, hiding comment');
-          // デバッグのため、画面中央に表示してみる
-          const debugX = chartContainer.clientWidth / 2;
-          const debugY = chartContainer.clientHeight / 2;
-          setPosition({ x: debugX, y: debugY });
-          setIsVisible(true);
-          console.log('CommentBubble: Debug position set to center:', { x: debugX, y: debugY });
+        // 座標が取得できない場合は非表示
+        if (x === null || y === null) {
+          setIsVisible(false);
+          return;
         }
+
+        // 表示範囲チェック
+        const visibleRange = timeScale.getVisibleRange();
+        if (visibleRange && (timestamp < visibleRange.from || timestamp > visibleRange.to)) {
+          setIsVisible(false);
+          return;
+        }
+
+        // アンカー位置を保存
+        setAnchorPosition({ x: Math.round(x), y: Math.round(y) });
+
+        // 最適な配置位置を計算
+        const optimal = findOptimalPosition(x, y, timestamp);
+        setPosition({ x: Math.round(optimal.x), y: Math.round(optimal.y) });
+        setPlacement(optimal.direction);
+
+        // 配置情報を親コンポーネントに通知
+        if (onPlacement) {
+          onPlacement(group.comments[0]?.id || `group-${timestamp}`, {
+            x: optimal.x,
+            y: optimal.y,
+            width: BUBBLE_WIDTH,
+            height: BUBBLE_HEIGHT
+          });
+        }
+
+        setIsVisible(true);
+
       } catch (error) {
         console.error('CommentBubble: Error updating position:', error);
-        // エラー時もデバッグ表示
-        const debugX = 100;
-        const debugY = 100;
-        setPosition({ x: debugX, y: debugY });
-        setIsVisible(true);
+        setIsVisible(false);
       }
     };
 
-    // 初回更新
     updatePosition();
     
-    // チャートの更新を監視
-    const intervalId = setInterval(updatePosition, 1000); // 1秒ごとに位置を更新
-    
-    // チャートイベントの監視
-    let unsubscribeTimeRange;
-    let unsubscribeCrosshair;
-    
-    try {
-      const timeScale = chart.timeScale();
-      unsubscribeTimeRange = timeScale.subscribeVisibleTimeRangeChange(updatePosition);
-      unsubscribeCrosshair = chart.subscribeCrosshairMove(updatePosition);
-    } catch (error) {
-      console.error('CommentBubble: Error subscribing to events:', error);
-    }
+    const timeScale = chart.timeScale();
+    timeScale.subscribeVisibleTimeRangeChange(updatePosition);
     
     return () => {
-      clearInterval(intervalId);
-      if (unsubscribeTimeRange) {
-        try {
-          unsubscribeTimeRange();
-        } catch (e) {
-          console.error('CommentBubble: Error unsubscribing from time range:', e);
-        }
-      }
-      if (unsubscribeCrosshair) {
-        try {
-          unsubscribeCrosshair();
-        } catch (e) {
-          console.error('CommentBubble: Error unsubscribing from crosshair:', e);
-        }
-      }
+      timeScale.unsubscribeVisibleTimeRangeChange(updatePosition);
     };
-  }, [group, chart, chartContainer]);
+  }, [group, chart, chartContainer, chartData, placedBubbles, onPlacement]);
+
+  // アンカーラインの端点を計算
+  const getLineEndpoint = () => {
+    switch (placement) {
+      case 'top':
+        return { x: position.x + BUBBLE_WIDTH / 2, y: position.y + BUBBLE_HEIGHT };
+      case 'bottom':
+        return { x: position.x + BUBBLE_WIDTH / 2, y: position.y };
+      case 'left':
+        return { x: position.x + BUBBLE_WIDTH, y: position.y + BUBBLE_HEIGHT / 2 };
+      case 'right':
+        return { x: position.x, y: position.y + BUBBLE_HEIGHT / 2 };
+      case 'top-left':
+        return { x: position.x + BUBBLE_WIDTH, y: position.y + BUBBLE_HEIGHT };
+      case 'top-right':
+        return { x: position.x, y: position.y + BUBBLE_HEIGHT };
+      case 'bottom-left':
+        return { x: position.x + BUBBLE_WIDTH, y: position.y };
+      case 'bottom-right':
+        return { x: position.x, y: position.y };
+      default:
+        return { x: position.x + BUBBLE_WIDTH / 2, y: position.y + BUBBLE_HEIGHT / 2 };
+    }
+  };
 
   if (!isVisible) {
-    console.log('CommentBubble: Not rendering (not visible)');
     return null;
   }
 
-  // 単一のコメント
-  if (group.comments.length === 1) {
-    const comment = group.comments[0];
-    
-    console.log('CommentBubble: Rendering single comment at position:', position);
-    
-    return (
-      <div 
-        className="comment-bubble comment-bubble-single"
-        style={{ 
-          position: 'absolute',
-          left: `${position.x}px`, 
-          top: `${position.y - 30}px`, // 上に配置
-          transform: 'translateX(-50%)',
-          zIndex: 1000, // 高いz-indexを設定
-          pointerEvents: 'auto',
-          // デバッグ用の背景色
-          background: 'rgba(255, 255, 255, 0.95)',
-          border: '2px solid #7dd3c0',
-          borderRadius: '20px',
-          padding: '0.4rem 0.8rem',
-          boxShadow: '0 2px 10px rgba(0, 0, 0, 0.15)'
-        }}
-        onClick={() => setShowDetails(!showDetails)}
-      >
-        <span className="comment-emoji" style={{ fontSize: '1.2rem', marginRight: '0.5rem' }}>
-          {comment.emotion_icon || '💬'}
-        </span>
-        <span className="comment-text" style={{ fontSize: '0.85rem', color: '#1f2937' }}>
-          {showDetails || comment.content.length <= 30 
-            ? comment.content 
-            : comment.content.substring(0, 30) + '...'}
-        </span>
-      </div>
-    );
-  }
+  const lineEnd = getLineEndpoint();
+  const comment = group.comments[0];
 
-  // 複数のコメント（集約表示）
-  console.log('CommentBubble: Rendering aggregated comments at position:', position);
-  
   return (
     <>
+      {/* アンカーライン */}
+      <svg 
+        className="anchor-line-svg"
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '100%',
+          pointerEvents: 'none',
+          zIndex: 999
+        }}
+      >
+        <line
+          x1={anchorPosition.x}
+          y1={anchorPosition.y}
+          x2={lineEnd.x}
+          y2={lineEnd.y}
+          stroke="#7dd3c0"
+          strokeWidth="1"
+          strokeDasharray="2,2"
+          opacity="0.6"
+        />
+        <circle
+          cx={anchorPosition.x}
+          cy={anchorPosition.y}
+          r="3"
+          fill="#7dd3c0"
+          opacity="0.8"
+        />
+      </svg>
+
+      {/* コメントバブル */}
       <div 
-        className="comment-bubble comment-bubble-aggregated"
+        ref={bubbleRef}
+        className={`comment-bubble-advanced ${placement}`}
         style={{ 
           position: 'absolute',
           left: `${position.x}px`, 
-          top: `${position.y - 30}px`,
-          transform: 'translateX(-50%)',
+          top: `${position.y}px`,
+          width: `${BUBBLE_WIDTH}px`,
           zIndex: 1000,
-          pointerEvents: 'auto',
-          // デバッグ用のスタイル
-          background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
-          color: 'white',
-          fontWeight: 'bold',
-          padding: '0.6rem',
-          borderRadius: '50%',
-          width: '40px',
-          height: '40px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: '0.85rem',
-          boxShadow: '0 2px 10px rgba(0, 0, 0, 0.15)'
+          pointerEvents: 'auto'
         }}
         onClick={() => setShowDetails(!showDetails)}
       >
-        {group.comments.length}+
-      </div>
-      
-      {showDetails && (
-        <div 
-          style={{ 
-            position: 'absolute',
-            left: `${position.x}px`, 
-            top: `${position.y + 20}px`,
-            transform: 'translateX(-50%)',
-            background: 'white',
-            borderRadius: '1rem',
-            padding: '0.75rem',
-            boxShadow: '0 4px 15px rgba(0, 0, 0, 0.15)',
-            zIndex: 1001,
-            maxWidth: '250px',
-            maxHeight: '200px',
-            overflowY: 'auto',
-            pointerEvents: 'auto',
-            border: '1px solid #e5e7eb'
-          }}
-        >
-          {group.comments.map((comment, idx) => (
-            <div key={comment.id || idx} style={{ 
-              marginBottom: '0.5rem',
-              paddingBottom: '0.5rem',
-              borderBottom: idx < group.comments.length - 1 ? '1px solid #e5e7eb' : 'none'
-            }}>
-              <span style={{ fontSize: '1.2rem', marginRight: '0.5rem' }}>
-                {comment.emotion_icon || '💬'}
-              </span>
-              <span style={{ fontSize: '0.85rem', color: '#1f2937' }}>
-                {comment.content}
+        {/* 単一コメント */}
+        {group.comments.length === 1 ? (
+          <div className="bubble-content">
+            <span className="bubble-emoji">
+              {comment.emotion_icon || '💬'}
+            </span>
+            <span className="bubble-text">
+              {showDetails || comment.content.length <= 50 
+                ? comment.content 
+                : comment.content.substring(0, 50) + '...'}
+            </span>
+          </div>
+        ) : (
+          /* 集約コメント */
+          <>
+            <div className="bubble-content aggregated">
+              <span className="bubble-count">{group.comments.length}件</span>
+              <span className="bubble-preview">
+                {group.comments[0].emotion_icon} {group.comments[0].content.substring(0, 20)}...
               </span>
             </div>
-          ))}
-        </div>
-      )}
+            
+            {showDetails && (
+              <div className="bubble-details">
+                {group.comments.map((c, idx) => (
+                  <div key={c.id || idx} className="detail-item">
+                    <span className="detail-emoji">{c.emotion_icon || '💬'}</span>
+                    <span className="detail-text">{c.content}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* 吹き出しの尻尾（方向に応じて表示） */}
+        <div className={`bubble-tail tail-${placement}`}></div>
+      </div>
     </>
   );
 };

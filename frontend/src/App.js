@@ -9,6 +9,9 @@ import './styles/App.css';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
+// LocalStorageのキー
+const TIMEFRAME_STORAGE_KEY = 'nasdaq100_selected_timeframe';
+
 // デモデータ生成関数
 function generateDemoData(timeFrame) {
   const now = Math.floor(Date.now() / 1000);
@@ -79,8 +82,31 @@ function generateDemoComments() {
   ];
 }
 
+// LocalStorageから時間枠を取得する関数
+function getStoredTimeFrame() {
+  try {
+    const stored = localStorage.getItem(TIMEFRAME_STORAGE_KEY);
+    if (stored && ['1m', '3m', '5m', '15m', '1H', '4H', '1D', '1W'].includes(stored)) {
+      return stored;
+    }
+  } catch (error) {
+    console.error('Failed to load timeframe from localStorage:', error);
+  }
+  return '15m'; // デフォルト値
+}
+
+// LocalStorageに時間枠を保存する関数
+function saveTimeFrame(timeFrame) {
+  try {
+    localStorage.setItem(TIMEFRAME_STORAGE_KEY, timeFrame);
+  } catch (error) {
+    console.error('Failed to save timeframe to localStorage:', error);
+  }
+}
+
 function App() {
-  const [timeFrame, setTimeFrame] = useState('15m');
+  // LocalStorageから初期値を読み込む
+  const [timeFrame, setTimeFrame] = useState(getStoredTimeFrame);
   const [comments, setComments] = useState([]);
   const [sentiment, setSentiment] = useState({ buy_percentage: 50, sell_percentage: 50 });
   const [showPostModal, setShowPostModal] = useState(false);
@@ -89,11 +115,20 @@ function App() {
   const [selectedCandle, setSelectedCandle] = useState(null);
   const [connectionError, setConnectionError] = useState(false);
 
-  const loadChartData = useCallback(async () => {
+  // 時間枠変更時の処理
+  const handleTimeFrameChange = useCallback((newTimeFrame) => {
+    console.log('Changing timeframe to:', newTimeFrame);
+    setTimeFrame(newTimeFrame);
+    saveTimeFrame(newTimeFrame); // LocalStorageに保存
+  }, []);
+
+  const loadChartData = useCallback(async (currentTimeFrame) => {
     try {
-      console.log('Loading chart data for timeframe:', timeFrame);
+      // 引数として受け取った時間枠を使用（stateの更新遅延を回避）
+      const tf = currentTimeFrame || timeFrame;
+      console.log('Loading chart data for timeframe:', tf);
       
-      const res = await axios.get(`${API_URL}/api/market/^NDX/${timeFrame}`, {
+      const res = await axios.get(`${API_URL}/api/market/^NDX/${tf}`, {
         timeout: 10000,
         headers: {
           'Content-Type': 'application/json',
@@ -110,7 +145,8 @@ function App() {
       console.error('Failed to load chart data:', error);
       setConnectionError(true);
       // デモデータを設定
-      const demoData = generateDemoData(timeFrame);
+      const tf = currentTimeFrame || timeFrame;
+      const demoData = generateDemoData(tf);
       setChartData(demoData);
     }
   }, [timeFrame]);
@@ -273,13 +309,15 @@ function App() {
       }
     });
 
-    // 初期データを取得
-    loadChartData();
+    // 初期データを取得（現在の時間枠を使用）
+    const currentTimeFrame = getStoredTimeFrame();
+    loadChartData(currentTimeFrame);
     loadComments();
     loadSentiment();
     
     // 定期的にデータを更新（30秒ごと）
     const intervalId = setInterval(() => {
+      // 現在の時間枠を維持してデータを更新
       loadChartData();
       loadComments();
       loadSentiment();
@@ -295,7 +333,7 @@ function App() {
   useEffect(() => {
     // 時間枠が変更されたらチャートデータのみ再読み込み
     console.log('Timeframe changed to:', timeFrame);
-    loadChartData();
+    loadChartData(timeFrame);
   }, [timeFrame, loadChartData]);
 
   const handleCandleClick = useCallback((candleData) => {
@@ -336,7 +374,7 @@ function App() {
         
         <TimeFrameSelector 
           selected={timeFrame} 
-          onChange={setTimeFrame} 
+          onChange={handleTimeFrameChange} 
         />
         
         <PositionIndicator sentiment={sentiment} />
