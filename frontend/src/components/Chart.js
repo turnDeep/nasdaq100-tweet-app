@@ -484,6 +484,7 @@ const Chart = ({ data, comments, onCandleClick }) => {
               key={key}
               group={group}
               chart={chartRef.current}
+              series={seriesRef.current}
               chartContainer={chartContainerRef.current}
               chartData={data}
               placedBubbles={placedBubbles}
