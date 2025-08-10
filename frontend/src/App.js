@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Chart from './components/Chart';
 import TimeFrameSelector from './components/TimeFrameSelector';
 import PositionIndicator from './components/PositionIndicator';
@@ -29,7 +29,7 @@ function generateDemoData(timeFrame) {
   const interval = intervals[timeFrame] || 900;
   const numPoints = 100;
   const data = [];
-  let basePrice = 17000;
+  let basePrice = 23700; // ナスダック100先物の現実的な価格帯に変更
   
   for (let i = 0; i < numPoints; i++) {
     const time = now - (numPoints - i) * interval;
@@ -61,21 +61,21 @@ function generateDemoComments() {
     {
       id: 1,
       timestamp: now - 300,  // 5分前
-      price: 17100.50,
+      price: 23700.50,
       content: 'ナスダック強気！🚀',
       emotion_icon: '🚀'
     },
     {
       id: 2,
       timestamp: now - 900,  // 15分前
-      price: 17050.25,
+      price: 23650.25,
       content: 'この辺で買い増し検討中',
       emotion_icon: '😊'
     },
     {
       id: 3,
       timestamp: now - 1800,  // 30分前
-      price: 17150.75,
+      price: 23750.75,
       content: '利確しました。様子見',
       emotion_icon: '😎'
     }
@@ -114,6 +114,14 @@ function App() {
   const [wsService, setWsService] = useState(null);
   const [selectedCandle, setSelectedCandle] = useState(null);
   const [connectionError, setConnectionError] = useState(false);
+  
+  // 現在の時間枠を保持するRef（クロージャ問題を回避）
+  const timeFrameRef = useRef(timeFrame);
+  
+  // 時間枠が変更されたらRefも更新
+  useEffect(() => {
+    timeFrameRef.current = timeFrame;
+  }, [timeFrame]);
 
   // 時間枠変更時の処理
   const handleTimeFrameChange = useCallback((newTimeFrame) => {
@@ -122,10 +130,10 @@ function App() {
     saveTimeFrame(newTimeFrame); // LocalStorageに保存
   }, []);
 
-  const loadChartData = useCallback(async (currentTimeFrame) => {
+  const loadChartData = useCallback(async (specificTimeFrame) => {
     try {
-      // 引数として受け取った時間枠を使用（stateの更新遅延を回避）
-      const tf = currentTimeFrame || timeFrame;
+      // 引数が渡されない場合は、RefまたはStateから現在の時間枠を取得
+      const tf = specificTimeFrame || timeFrameRef.current || timeFrame;
       console.log('Loading chart data for timeframe:', tf);
       
       const res = await axios.get(`${API_URL}/api/market/^NDX/${tf}`, {
@@ -145,7 +153,7 @@ function App() {
       console.error('Failed to load chart data:', error);
       setConnectionError(true);
       // デモデータを設定
-      const tf = currentTimeFrame || timeFrame;
+      const tf = specificTimeFrame || timeFrameRef.current || timeFrame;
       const demoData = generateDemoData(tf);
       setChartData(demoData);
     }
@@ -186,6 +194,7 @@ function App() {
       
       // エラー時にデモコメントを表示
       const demoComments = generateDemoComments();
+      console.log('Using demo comments:', demoComments);
       setComments(demoComments);
     }
   }, []);
@@ -209,7 +218,7 @@ function App() {
       const lastCandle = prevData[prevData.length - 1];
       const now = Math.floor(Date.now() / 1000);
       
-      // 時間枠に応じた間隔を計算
+      // 時間枠に応じた間隔を計算（Refから取得）
       const intervals = {
         '1m': 60,
         '3m': 180,
@@ -221,7 +230,7 @@ function App() {
         '1W': 604800
       };
       
-      const interval = intervals[timeFrame] || 900;
+      const interval = intervals[timeFrameRef.current] || 900;
       
       // 新しいローソク足を作成するか、既存のものを更新するか判断
       if (now - lastCandle.time >= interval) {
@@ -245,7 +254,7 @@ function App() {
         return updatedData;
       }
     });
-  }, [timeFrame]);
+  }, []); // 依存配列を空にしてRefを使用
 
   useEffect(() => {
     // WebSocket接続を初期化
@@ -315,10 +324,10 @@ function App() {
     loadComments();
     loadSentiment();
     
-    // 定期的にデータを更新（30秒ごと）
+    // 定期的にデータを更新（30秒ごと）- Refを使用して現在の時間枠を維持
     const intervalId = setInterval(() => {
-      // 現在の時間枠を維持してデータを更新
-      loadChartData();
+      console.log('Periodic update with timeframe:', timeFrameRef.current);
+      loadChartData(); // Refから現在の時間枠を取得
       loadComments();
       loadSentiment();
     }, 30000);
