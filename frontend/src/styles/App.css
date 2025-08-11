@@ -11,7 +11,7 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: linear-gradient(135deg, #7dd3c0 0%, #5eead4 100%);
+  background: #2cbfc7;
   min-height: 100vh;
 }
 
@@ -50,10 +50,16 @@ body {
 }
 
 .logo-icon {
-  width: 40px;
-  height: 40px;
+  width: 35px;
+  height: 35px;
   object-fit: contain;
   display: block;
+}
+
+.logo-text {
+  font-size: 1.1rem;
+  font-weight: bold;
+  color: #1f2937;
 }
 
 /* エラーメッセージ */
@@ -179,7 +185,7 @@ body {
 
 /* チャート操作説明 */
 .chart-instructions {
-  background: linear-gradient(135deg, #7dd3c0 0%, #5eead4 100%);
+  background: #2cbfc7;
   color: white;
   padding: 0.75rem;
   border-radius: 1rem;
@@ -224,17 +230,21 @@ body {
   overflow: visible !important;
 }
 
-/* 高度な配置コメントバブル */
-.comment-bubble-advanced {
-  background: white;
-  border: 2px solid #7dd3c0;
-  border-radius: 12px;
-  padding: 0.75rem 1rem;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+/* モダンなコメントバブル（枠なし、半透過背景） */
+.comment-bubble-modern {
+  background: #2cbfc741;
+  border: none; /* 枠なし */
+  border-radius: 10px;
+  padding: 4px 10px; /* 余白を最小限に */
   cursor: pointer;
   transition: all 0.3s ease;
   animation: fadeInBubble 0.4s ease;
-  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  height: 35px; /* 固定高さ */
 }
 
 @keyframes fadeInBubble {
@@ -248,188 +258,100 @@ body {
   }
 }
 
-.comment-bubble-advanced:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
-  border-color: #5eead4;
+.comment-bubble-modern:hover {
+  background: #2cbfc7ef;
+  transform: translateY(-1px);
 }
 
-/* バブルコンテンツ */
-.bubble-content {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
+/* バブル内の絵文字 */
 .bubble-emoji {
-  font-size: 1.4rem;
+  font-size: 1.1rem;
   flex-shrink: 0;
+  line-height: 1;
 }
 
+/* バブル内のテキスト */
 .bubble-text {
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   color: #1f2937;
-  line-height: 1.4;
+  line-height: 1.2;
   flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 集約バブル */
-.bubble-content.aggregated {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.25rem;
+.bubble-aggregated {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .bubble-count {
-  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+  background: rgba(251, 191, 36, 0.9);
   color: white;
-  padding: 0.2rem 0.5rem;
-  border-radius: 12px;
-  font-size: 0.75rem;
+  padding: 2px 6px;
+  border-radius: 8px;
+  font-size: 0.7rem;
   font-weight: bold;
+  flex-shrink: 0;
 }
 
 .bubble-preview {
-  font-size: 0.85rem;
-  color: #6b7280;
+  font-size: 0.8rem;
+  color: #1f2937;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  width: 100%;
 }
 
 /* バブル詳細 */
 .bubble-details {
-  margin-top: 0.75rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid #e5e7eb;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   max-height: 150px;
   overflow-y: auto;
   animation: slideDownDetails 0.3s ease;
+  min-width: 200px;
+  z-index: 1001;
 }
 
 @keyframes slideDownDetails {
   from {
-    max-height: 0;
     opacity: 0;
+    transform: translateY(-10px);
   }
   to {
-    max-height: 150px;
     opacity: 1;
+    transform: translateY(0);
   }
 }
 
 .detail-item {
   display: flex;
-  align-items: flex-start;
-  gap: 0.4rem;
-  margin-bottom: 0.5rem;
-  padding: 0.4rem;
-  background: #f9fafb;
-  border-radius: 8px;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  padding: 4px 6px;
+  background: rgba(167, 243, 208, 0.3);
+  border-radius: 6px;
 }
 
 .detail-emoji {
-  font-size: 1.1rem;
+  font-size: 0.9rem;
   flex-shrink: 0;
 }
 
 .detail-text {
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   color: #374151;
-  line-height: 1.3;
-}
-
-/* バブルの尻尾（吹き出しの三角形部分） */
-.bubble-tail {
-  position: absolute;
-  width: 0;
-  height: 0;
-  border-style: solid;
-}
-
-/* 上向きの尻尾 */
-.bubble-tail.tail-top {
-  bottom: -8px;
-  left: 50%;
-  transform: translateX(-50%);
-  border-width: 8px 8px 0 8px;
-  border-color: white transparent transparent transparent;
-}
-
-.bubble-tail.tail-top::before {
-  content: '';
-  position: absolute;
-  bottom: 2px;
-  left: -10px;
-  border-style: solid;
-  border-width: 10px 10px 0 10px;
-  border-color: #7dd3c0 transparent transparent transparent;
-}
-
-/* 下向きの尻尾 */
-.bubble-tail.tail-bottom {
-  top: -8px;
-  left: 50%;
-  transform: translateX(-50%);
-  border-width: 0 8px 8px 8px;
-  border-color: transparent transparent white transparent;
-}
-
-.bubble-tail.tail-bottom::before {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: -10px;
-  border-style: solid;
-  border-width: 0 10px 10px 10px;
-  border-color: transparent transparent #7dd3c0 transparent;
-}
-
-/* 左向きの尻尾 */
-.bubble-tail.tail-left {
-  right: -8px;
-  top: 50%;
-  transform: translateY(-50%);
-  border-width: 8px 0 8px 8px;
-  border-color: transparent transparent transparent white;
-}
-
-.bubble-tail.tail-left::before {
-  content: '';
-  position: absolute;
-  right: 2px;
-  top: -10px;
-  border-style: solid;
-  border-width: 10px 0 10px 10px;
-  border-color: transparent transparent transparent #7dd3c0;
-}
-
-/* 右向きの尻尾 */
-.bubble-tail.tail-right {
-  left: -8px;
-  top: 50%;
-  transform: translateY(-50%);
-  border-width: 8px 8px 8px 0;
-  border-color: transparent white transparent transparent;
-}
-
-.bubble-tail.tail-right::before {
-  content: '';
-  position: absolute;
-  left: 2px;
-  top: -10px;
-  border-style: solid;
-  border-width: 10px 10px 10px 0;
-  border-color: transparent #7dd3c0 transparent transparent;
-}
-
-/* 斜め向きの尻尾 */
-.bubble-tail.tail-top-left,
-.bubble-tail.tail-top-right,
-.bubble-tail.tail-bottom-left,
-.bubble-tail.tail-bottom-right {
-  display: none; /* 斜めの場合は尻尾を表示しない（複雑になるため） */
+  line-height: 1.2;
 }
 
 /* アンカーラインSVG */
@@ -704,8 +626,8 @@ body {
   }
 
   .logo-icon {
-    width: 35px;
-    height: 35px;
+    width: 30px;
+    height: 30px;
   }
 
   .timeframe-selector {
@@ -731,17 +653,18 @@ body {
     padding: 0.5rem;
   }
 
-  .comment-bubble-advanced {
-    font-size: 0.85rem;
-    padding: 0.5rem 0.75rem;
+  .comment-bubble-modern {
+    font-size: 0.75rem;
+    padding: 3px 8px;
+    height: 30px;
   }
 
   .bubble-emoji {
-    font-size: 1.2rem;
+    font-size: 0.9rem;
   }
 
   .bubble-text {
-    font-size: 0.8rem;
+    font-size: 0.75rem;
   }
 }
 
@@ -761,8 +684,8 @@ body {
   }
 
   .logo-icon {
-    width: 30px;
-    height: 30px;
+    width: 25px;
+    height: 25px;
   }
 
   .timeframe-selector {
@@ -791,18 +714,18 @@ body {
     font-size: 0.75rem;
   }
 
-  .comment-bubble-advanced {
-    font-size: 0.75rem;
-    padding: 0.4rem 0.6rem;
-    max-width: 150px;
+  .comment-bubble-modern {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    height: 28px;
   }
 
   .bubble-emoji {
-    font-size: 1rem;
+    font-size: 0.8rem;
   }
 
   .bubble-text {
-    font-size: 0.75rem;
+    font-size: 0.7rem;
   }
 
   .modal {
