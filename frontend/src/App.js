@@ -378,7 +378,8 @@ function App() {
     <div className="app">
       <header className="app-header">
         <div className="logo">
-          <span className="logo-text">📈 ナスダック100先物</span>
+          <img src="/nasu-icon.png" alt="NASDAQ" className="logo-icon" />
+          <span className="logo-text">ナスダック100先物</span>
         </div>
         
         <TimeFrameSelector 
