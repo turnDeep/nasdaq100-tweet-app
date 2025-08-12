@@ -73,8 +73,14 @@ const CommentBubble = ({ group, chart, series, chartContainer }) => {
             return;
           }
 
-          const roundedX = Math.round(x);
-          const roundedY = Math.round(y);
+          // ★★★ 座標のオフセット補正を追加 ★★★
+          // lightweight-chartsの内部パディングを補正
+          const CHART_OFFSET_X = 33;  // 右に30px補正
+          const CHART_OFFSET_Y = 63;  // 下に60px補正
+          
+          const roundedX = Math.round(x + CHART_OFFSET_X);
+          const roundedY = Math.round(y + CHART_OFFSET_Y);
+          
           setAnchorPosition({ x: roundedX, y: roundedY });
 
           // バブルの配置（右上に配置）
@@ -102,6 +108,16 @@ const CommentBubble = ({ group, chart, series, chartContainer }) => {
           });
 
           setIsVisible(true);
+
+          // デバッグ用ログ
+          console.log('CommentBubble position debug:', {
+            originalX: x,
+            originalY: y,
+            correctedX: roundedX,
+            correctedY: roundedY,
+            timestamp: memoizedTimestamp,
+            price: group.price
+          });
 
         } catch (error) {
           console.error('CommentBubble: Error updating position:', error);
@@ -208,11 +224,11 @@ const CommentBubble = ({ group, chart, series, chartContainer }) => {
           stroke="rgba(94, 234, 212, 0.3)"
           strokeWidth="0.5"
         />
-        {/* 先端に小さな点を追加 */}
+        {/* 先端に小さな点を追加（デバッグ用にも便利） */}
         <circle
           cx={anchorPosition.x}
           cy={anchorPosition.y}
-          r="2"
+          r="3"
           fill="rgba(94, 234, 212, 0.8)"
         />
       </svg>
