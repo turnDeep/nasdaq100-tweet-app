@@ -7,7 +7,6 @@ const Chart = ({ data, comments, onCandleClick }) => {
   const chartRef = useRef();
   const seriesRef = useRef();
   const [visibleComments, setVisibleComments] = useState([]);
-  const [placedBubbles, setPlacedBubbles] = useState([]); // 配置済みバブルの位置情報
   const clickTimeoutRef = useRef(null);
 
   // コメントを集約する関数
@@ -90,7 +89,6 @@ const Chart = ({ data, comments, onCandleClick }) => {
     if (!chartRef.current) {
       console.log('Chart: No chart reference');
       setVisibleComments([]);
-      setPlacedBubbles([]);
       return;
     }
 
@@ -101,7 +99,6 @@ const Chart = ({ data, comments, onCandleClick }) => {
     if (!timeScale || !priceScale) {
       console.log('Chart: Scales not available yet');
       setVisibleComments([]);
-      setPlacedBubbles([]);
       return;
     }
     
@@ -110,14 +107,12 @@ const Chart = ({ data, comments, onCandleClick }) => {
     if (!visibleRange) {
         console.log('Chart: Visible range not available yet.');
         setVisibleComments([]);
-        setPlacedBubbles([]);
         return;
     }
     
     if (!comments || comments.length === 0) {
       console.log('Chart: No comments to display');
       setVisibleComments([]);
-      setPlacedBubbles([]);
       return;
     }
 
@@ -157,23 +152,11 @@ const Chart = ({ data, comments, onCandleClick }) => {
       console.log('Chart: Setting', aggregated.length, 'visible comment groups');
       setVisibleComments(aggregated);
       
-      // 配置済みバブルリストをリセット（再配置のため）
-      setPlacedBubbles([]);
-      
     } catch (error) {
       console.error('Chart: Error updating visible comments:', error);
       setVisibleComments([]);
-      setPlacedBubbles([]);
     }
   }, [comments, aggregateComments]);
-
-  // バブルの配置情報を更新
-  const updateBubblePlacement = useCallback((bubbleId, boundingBox) => {
-    setPlacedBubbles(prev => {
-      const filtered = prev.filter(b => b.id !== bubbleId);
-      return [...filtered, { id: bubbleId, ...boundingBox }];
-    });
-  }, []);
 
   // チャートクリックハンドラー
   const handleChartClick = useCallback((param) => {
@@ -487,8 +470,6 @@ const Chart = ({ data, comments, onCandleClick }) => {
               series={seriesRef.current}
               chartContainer={chartContainerRef.current}
               chartData={data}
-              placedBubbles={placedBubbles}
-              onPlacement={updateBubblePlacement}
             />
           );
         })}
