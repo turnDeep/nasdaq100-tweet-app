@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 
 const CommentBubble = ({ group, chart, series, chartContainer, placedBubbles, onPlacement }) => {
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -6,6 +6,7 @@ const CommentBubble = ({ group, chart, series, chartContainer, placedBubbles, on
   const [isVisible, setIsVisible] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const bubbleRef = useRef(null);
+  const updateTimeoutRef = useRef(null);
 
   // 配置済みバブルとの重なりをチェック
   const checkOverlap = useCallback((x, y, width, height) => {
@@ -29,7 +30,7 @@ const CommentBubble = ({ group, chart, series, chartContainer, placedBubbles, on
     const contentLength = comment.content.length;
     const width = Math.min(Math.max(contentLength * 8 + 40, 120), 250);
     const height = 35;
-    const lineLength = 60; // 矢印の長さ
+    const lineLength = 80; // 矢印の長さを少し長くする
     
     // 複数の配置候補を試す
     const positions = [
@@ -69,6 +70,25 @@ const CommentBubble = ({ group, chart, series, chartContainer, placedBubbles, on
     };
   }, [checkOverlap, placedBubbles, group]);
 
+  // タイムスタンプの正規化（常に秒単位のUNIXタイムスタンプを返す）
+  const normalizeTimestamp = useCallback((timestamp) => {
+    if (typeof timestamp === 'number') {
+      // ミリ秒の場合は秒に変換
+      return timestamp > 1000000000000 ? Math.floor(timestamp / 1000) : timestamp;
+    } else if (typeof timestamp === 'string') {
+      const parsed = Date.parse(timestamp);
+      if (!isNaN(parsed)) {
+        return Math.floor(parsed / 1000);
+      }
+    }
+    return null;
+  }, []);
+
+  // メモ化されたタイムスタンプ
+  const memoizedTimestamp = useMemo(() => {
+    return normalizeTimestamp(group.timestamp);
+  }, [group.timestamp, normalizeTimestamp]);
+
   useEffect(() => {
     if (!chart || !series || !chartContainer || !group) {
       console.log('CommentBubble: Missing required props');
@@ -76,87 +96,110 @@ const CommentBubble = ({ group, chart, series, chartContainer, placedBubbles, on
       return;
     }
 
-    const updatePosition = () => {
-      try {
-        const timeScale = chart.timeScale();
-        
-        if (!timeScale || !series) {
-          console.warn('CommentBubble: Chart scales or series not available');
-          setIsVisible(false);
-          return;
-        }
-        
-        let timestamp;
-        if (typeof group.timestamp === 'number') {
-          timestamp = group.timestamp > 1000000000000 ? Math.floor(group.timestamp / 1000) : group.timestamp;
-        } else if (typeof group.timestamp === 'string') {
-          const parsed = Date.parse(group.timestamp);
-          if (!isNaN(parsed)) {
-            timestamp = Math.floor(parsed / 1000);
-          } else {
-            console.error('CommentBubble: Invalid timestamp string:', group.timestamp);
+    // デバウンス処理を追加して過度な更新を防ぐ
+    if (updateTimeoutRef.current) {
+      clearTimeout(updateTimeoutRef.current);
+    }
+
+    updateTimeoutRef.current = setTimeout(() => {
+      const updatePosition = () => {
+        try {
+          const timeScale = chart.timeScale();
+          
+          if (!timeScale || !series) {
+            console.warn('CommentBubble: Chart scales or series not available');
             setIsVisible(false);
             return;
           }
-        } else {
-          console.error('CommentBubble: Unknown timestamp format:', group.timestamp);
+          
+          if (memoizedTimestamp === null) {
+            console.error('CommentBubble: Invalid timestamp:', group.timestamp);
+            setIsVisible(false);
+            return;
+          }
+          
+          // 座標を取得
+          const x = timeScale.timeToCoordinate(memoizedTimestamp);
+          const y = series.priceToCoordinate(group.price);
+          
+          if (x === null || y === null || x === undefined || y === undefined) {
+            // エラーメッセージを抑制（通常の動作の一部）
+            setIsVisible(false);
+            return;
+          }
+
+          // 表示範囲チェック
+          const visibleRange = timeScale.getVisibleRange();
+          if (visibleRange && (memoizedTimestamp < visibleRange.from || memoizedTimestamp > visibleRange.to)) {
+            setIsVisible(false);
+            return;
+          }
+
+          const roundedX = Math.round(x);
+          const roundedY = Math.round(y);
+          setAnchorPosition({ x: roundedX, y: roundedY });
+
+          // 最適な位置を見つける
+          const bestPosition = findBestPosition(
+            roundedX,
+            roundedY,
+            chartContainer.clientWidth,
+            chartContainer.clientHeight
+          );
+          
+          setPosition({
+            x: bestPosition.x,
+            y: bestPosition.y,
+            width: bestPosition.width,
+            height: bestPosition.height,
+            side: bestPosition.side
+          });
+
+          if (onPlacement) {
+            onPlacement(group.comments[0]?.id || `group-${memoizedTimestamp}`, bestPosition);
+          }
+
+          setIsVisible(true);
+
+        } catch (error) {
+          console.error('CommentBubble: Error updating position:', error);
           setIsVisible(false);
-          return;
         }
-        
-        const x = timeScale.timeToCoordinate(timestamp);
-        const y = series.priceToCoordinate(group.price);
-        
-        if (x === null || y === null || x === undefined || y === undefined) {
-          console.warn('CommentBubble: Could not get coordinates');
-          setIsVisible(false);
-          return;
-        }
+      };
 
-        const visibleRange = timeScale.getVisibleRange();
-        if (visibleRange && (timestamp < visibleRange.from || timestamp > visibleRange.to)) {
-          console.log('CommentBubble: Comment outside visible range');
-          setIsVisible(false);
-          return;
-        }
+      updatePosition();
+    }, 50); // 50msのデバウンス
 
-        const roundedX = Math.round(x);
-        const roundedY = Math.round(y);
-        setAnchorPosition({ x: roundedX, y: roundedY });
-
-        // 最適な位置を見つける
-        const bestPosition = findBestPosition(
-          roundedX,
-          roundedY,
-          chartContainer.clientWidth,
-          chartContainer.clientHeight
-        );
-        
-        setPosition({
-          x: bestPosition.x,
-          y: bestPosition.y,
-          width: bestPosition.width,
-          height: bestPosition.height,
-          side: bestPosition.side
-        });
-
-        if (onPlacement) {
-          onPlacement(group.comments[0]?.id || `group-${timestamp}`, bestPosition);
-        }
-
-        setIsVisible(true);
-
-      } catch (error) {
-        console.error('CommentBubble: Error updating position:', error);
-        setIsVisible(false);
+    // クリーンアップ
+    return () => {
+      if (updateTimeoutRef.current) {
+        clearTimeout(updateTimeoutRef.current);
       }
     };
+  }, [group, chart, series, chartContainer, onPlacement, findBestPosition, memoizedTimestamp]);
 
-    updatePosition();
-    
+  // 表示範囲変更の監視
+  useEffect(() => {
+    if (!chart) return;
+
     const timeScale = chart.timeScale();
     const handleVisibleRangeChange = () => {
-      updatePosition();
+      if (!memoizedTimestamp) return;
+      
+      const visibleRange = timeScale.getVisibleRange();
+      if (visibleRange) {
+        const isInRange = memoizedTimestamp >= visibleRange.from && memoizedTimestamp <= visibleRange.to;
+        if (!isInRange && isVisible) {
+          setIsVisible(false);
+        } else if (isInRange && !isVisible) {
+          // 再度位置を計算する必要がある場合
+          const x = timeScale.timeToCoordinate(memoizedTimestamp);
+          const y = series?.priceToCoordinate(group.price);
+          if (x !== null && y !== null) {
+            setIsVisible(true);
+          }
+        }
+      }
     };
     
     timeScale.subscribeVisibleTimeRangeChange(handleVisibleRangeChange);
@@ -164,26 +207,42 @@ const CommentBubble = ({ group, chart, series, chartContainer, placedBubbles, on
     return () => {
       timeScale.unsubscribeVisibleTimeRangeChange(handleVisibleRangeChange);
     };
-  }, [group, chart, series, chartContainer, onPlacement, findBestPosition]);
+  }, [chart, series, group.price, isVisible, memoizedTimestamp]);
 
   if (!isVisible) {
     return null;
   }
 
   const comment = group.comments[0];
-  const lineLength = 60; // 矢印の長さ
 
-  // 矢印の終点を計算（左から伸ばす）
-  const lineEnd = {
-    x: position.x,
-    y: position.y + (position.height || 35) / 2
+  // 吹き出しの尻尾を作成（三角形のパス）
+  const createSpeechBubbleTail = () => {
+    const bubbleX = position.x;
+    const bubbleY = position.y + (position.height || 35) / 2;
+    
+    // 吹き出しの尻尾の形状を定義
+    const tailWidth = 12; // 根元の幅
+    const tailTipOffset = 5; // 先端のオフセット
+    
+    // パスを作成（三角形の吹き出し尻尾）
+    const path = `
+      M ${bubbleX} ${bubbleY - tailWidth/2}
+      Q ${(bubbleX + anchorPosition.x) / 2} ${bubbleY}
+        ${anchorPosition.x} ${anchorPosition.y + tailTipOffset}
+      L ${anchorPosition.x} ${anchorPosition.y - tailTipOffset}
+      Q ${(bubbleX + anchorPosition.x) / 2} ${bubbleY}
+        ${bubbleX} ${bubbleY + tailWidth/2}
+      Z
+    `;
+    
+    return path;
   };
 
   return (
     <>
-      {/* アンカーライン（左から伸ばす） */}
+      {/* 吹き出しの尻尾（矢印の代わり） */}
       <svg 
-        className="anchor-line-svg"
+        className="speech-bubble-tail-svg"
         style={{
           position: 'absolute',
           top: 0,
@@ -194,14 +253,24 @@ const CommentBubble = ({ group, chart, series, chartContainer, placedBubbles, on
           zIndex: 999
         }}
       >
-        <line
-          x1={anchorPosition.x}
-          y1={anchorPosition.y}
-          x2={lineEnd.x}
-          y2={lineEnd.y}
-          stroke="rgba(94, 234, 212, 0.8)"
-          strokeWidth="1.5"
-          opacity="0.8"
+        <defs>
+          <linearGradient id={`gradient-${comment.id}`} x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="rgba(94, 234, 212, 0.15)" />
+            <stop offset="100%" stopColor="rgba(94, 234, 212, 0.6)" />
+          </linearGradient>
+        </defs>
+        <path
+          d={createSpeechBubbleTail()}
+          fill={`url(#gradient-${comment.id})`}
+          stroke="rgba(94, 234, 212, 0.4)"
+          strokeWidth="1"
+        />
+        {/* 先端の点 */}
+        <circle
+          cx={anchorPosition.x}
+          cy={anchorPosition.y}
+          r="3"
+          fill="rgba(94, 234, 212, 0.8)"
         />
       </svg>
 
