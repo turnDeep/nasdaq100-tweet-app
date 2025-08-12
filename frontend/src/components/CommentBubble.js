@@ -77,15 +77,15 @@ const CommentBubble = ({ group, chart, series, chartContainer }) => {
           const roundedY = Math.round(y);
           setAnchorPosition({ x: roundedX, y: roundedY });
 
-          // バブルの配置（左斜め上に固定配置）
+          // バブルの配置（右上に配置）
           const comment = group.comments[0];
           const contentLength = comment.content.length;
           const width = Math.min(Math.max(contentLength * 8 + 40, 120), 250);
           const height = 35;
           
-          // 左斜め上に配置（重なり判定なし）
-          const offsetX = -100; // 左に100px
-          const offsetY = -50;  // 上に50px
+          // 右上に配置
+          const offsetX = 60;  // 右に60px
+          const offsetY = -40; // 上に40px
           
           const bubbleX = roundedX + offsetX;
           const bubbleY = roundedY + offsetY;
@@ -157,20 +157,20 @@ const CommentBubble = ({ group, chart, series, chartContainer }) => {
 
   const comment = group.comments[0];
 
-  // シンプルな三角形の吹き出し尻尾を作成
+  // シンプルな三角形の吹き出し尻尾を作成（左側から）
   const createSpeechBubbleTail = () => {
-    // バブルの右下角から
-    const bubbleX = position.x + position.width;
-    const bubbleY = position.y + position.height;
+    // バブルの左下角から
+    const bubbleX = position.x;
+    const bubbleY = position.y + position.height / 2;
     
     // 三角形の頂点（ローソク足の位置）
     const tipX = anchorPosition.x;
     const tipY = anchorPosition.y;
     
-    // 三角形の基部（バブルとの接続部分）
-    const baseWidth = 15; // 三角形の基部の幅
+    // 三角形の基部の幅
+    const baseWidth = 12;
     
-    // パスを作成（シンプルな三角形）
+    // パスを作成（シンプルな三角形、左側から出る）
     const path = `
       M ${bubbleX} ${bubbleY - baseWidth/2}
       L ${tipX} ${tipY}
@@ -197,7 +197,7 @@ const CommentBubble = ({ group, chart, series, chartContainer }) => {
         }}
       >
         <defs>
-          <linearGradient id={`gradient-${comment.id}`} x1="0%" y1="0%" x2="100%" y2="0%">
+          <linearGradient id={`gradient-${comment.id}`} x1="100%" y1="0%" x2="0%" y2="0%">
             <stop offset="0%" stopColor="rgba(94, 234, 212, 0.6)" />
             <stop offset="100%" stopColor="rgba(94, 234, 212, 0.15)" />
           </linearGradient>
@@ -207,6 +207,13 @@ const CommentBubble = ({ group, chart, series, chartContainer }) => {
           fill={`url(#gradient-${comment.id})`}
           stroke="rgba(94, 234, 212, 0.3)"
           strokeWidth="0.5"
+        />
+        {/* 先端に小さな点を追加 */}
+        <circle
+          cx={anchorPosition.x}
+          cy={anchorPosition.y}
+          r="2"
+          fill="rgba(94, 234, 212, 0.8)"
         />
       </svg>
 
