@@ -1,74 +1,12 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 
-const CommentBubble = ({ group, chart, series, chartContainer, placedBubbles, onPlacement }) => {
+const CommentBubble = ({ group, chart, series, chartContainer }) => {
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [anchorPosition, setAnchorPosition] = useState({ x: 0, y: 0 });
   const [isVisible, setIsVisible] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const bubbleRef = useRef(null);
   const updateTimeoutRef = useRef(null);
-
-  // 配置済みバブルとの重なりをチェック
-  const checkOverlap = useCallback((x, y, width, height) => {
-    for (const placed of placedBubbles) {
-      if (placed.id === (group.comments[0]?.id || `group-${group.timestamp}`)) continue;
-      
-      // 重なり判定
-      if (x < placed.x + placed.width &&
-          x + width > placed.x &&
-          y < placed.y + placed.height &&
-          y + height > placed.y) {
-        return true;
-      }
-    }
-    return false;
-  }, [placedBubbles, group]);
-
-  // 最適な配置位置を探す
-  const findBestPosition = useCallback((anchorX, anchorY, containerWidth, containerHeight) => {
-    const comment = group.comments[0];
-    const contentLength = comment.content.length;
-    const width = Math.min(Math.max(contentLength * 8 + 40, 120), 250);
-    const height = 35;
-    const lineLength = 80; // 矢印の長さを少し長くする
-    
-    // 複数の配置候補を試す
-    const positions = [
-      // 右側配置
-      { x: anchorX + lineLength, y: anchorY - height / 2, side: 'right' },
-      // 左側配置
-      { x: anchorX - lineLength - width, y: anchorY - height / 2, side: 'left' },
-      // 右上配置
-      { x: anchorX + lineLength, y: anchorY - height - 20, side: 'right-top' },
-      // 右下配置
-      { x: anchorX + lineLength, y: anchorY + 20, side: 'right-bottom' },
-      // 左上配置
-      { x: anchorX - lineLength - width, y: anchorY - height - 20, side: 'left-top' },
-      // 左下配置
-      { x: anchorX - lineLength - width, y: anchorY + 20, side: 'left-bottom' },
-    ];
-    
-    for (const pos of positions) {
-      // 画面内に収まるか確認
-      const adjustedX = Math.max(10, Math.min(pos.x, containerWidth - width - 10));
-      const adjustedY = Math.max(10, Math.min(pos.y, containerHeight - height - 10));
-      
-      // 重なりチェック
-      if (!checkOverlap(adjustedX, adjustedY, width, height)) {
-        return { x: adjustedX, y: adjustedY, width, height, side: pos.side };
-      }
-    }
-    
-    // 重ならない位置が見つからない場合は、少しずらして配置
-    const offsetY = placedBubbles.length * 40;
-    return {
-      x: Math.max(10, Math.min(anchorX + lineLength, containerWidth - width - 10)),
-      y: Math.max(10, Math.min(anchorY - height / 2 + offsetY, containerHeight - height - 10)),
-      width,
-      height,
-      side: 'right'
-    };
-  }, [checkOverlap, placedBubbles, group]);
 
   // タイムスタンプの正規化（常に秒単位のUNIXタイムスタンプを返す）
   const normalizeTimestamp = useCallback((timestamp) => {
@@ -139,25 +77,29 @@ const CommentBubble = ({ group, chart, series, chartContainer, placedBubbles, on
           const roundedY = Math.round(y);
           setAnchorPosition({ x: roundedX, y: roundedY });
 
-          // 最適な位置を見つける
-          const bestPosition = findBestPosition(
-            roundedX,
-            roundedY,
-            chartContainer.clientWidth,
-            chartContainer.clientHeight
-          );
+          // バブルの配置（左斜め上に固定配置）
+          const comment = group.comments[0];
+          const contentLength = comment.content.length;
+          const width = Math.min(Math.max(contentLength * 8 + 40, 120), 250);
+          const height = 35;
+          
+          // 左斜め上に配置（重なり判定なし）
+          const offsetX = -100; // 左に100px
+          const offsetY = -50;  // 上に50px
+          
+          const bubbleX = roundedX + offsetX;
+          const bubbleY = roundedY + offsetY;
+          
+          // 画面内に収まるように調整
+          const adjustedX = Math.max(10, Math.min(bubbleX, chartContainer.clientWidth - width - 10));
+          const adjustedY = Math.max(10, Math.min(bubbleY, chartContainer.clientHeight - height - 10));
           
           setPosition({
-            x: bestPosition.x,
-            y: bestPosition.y,
-            width: bestPosition.width,
-            height: bestPosition.height,
-            side: bestPosition.side
+            x: adjustedX,
+            y: adjustedY,
+            width: width,
+            height: height
           });
-
-          if (onPlacement) {
-            onPlacement(group.comments[0]?.id || `group-${memoizedTimestamp}`, bestPosition);
-          }
 
           setIsVisible(true);
 
@@ -176,7 +118,7 @@ const CommentBubble = ({ group, chart, series, chartContainer, placedBubbles, on
         clearTimeout(updateTimeoutRef.current);
       }
     };
-  }, [group, chart, series, chartContainer, onPlacement, findBestPosition, memoizedTimestamp]);
+  }, [group, chart, series, chartContainer, memoizedTimestamp]);
 
   // 表示範囲変更の監視
   useEffect(() => {
@@ -215,23 +157,24 @@ const CommentBubble = ({ group, chart, series, chartContainer, placedBubbles, on
 
   const comment = group.comments[0];
 
-  // 吹き出しの尻尾を作成（三角形のパス）
+  // シンプルな三角形の吹き出し尻尾を作成
   const createSpeechBubbleTail = () => {
-    const bubbleX = position.x;
-    const bubbleY = position.y + (position.height || 35) / 2;
+    // バブルの右下角から
+    const bubbleX = position.x + position.width;
+    const bubbleY = position.y + position.height;
     
-    // 吹き出しの尻尾の形状を定義
-    const tailWidth = 12; // 根元の幅
-    const tailTipOffset = 5; // 先端のオフセット
+    // 三角形の頂点（ローソク足の位置）
+    const tipX = anchorPosition.x;
+    const tipY = anchorPosition.y;
     
-    // パスを作成（三角形の吹き出し尻尾）
+    // 三角形の基部（バブルとの接続部分）
+    const baseWidth = 15; // 三角形の基部の幅
+    
+    // パスを作成（シンプルな三角形）
     const path = `
-      M ${bubbleX} ${bubbleY - tailWidth/2}
-      Q ${(bubbleX + anchorPosition.x) / 2} ${bubbleY}
-        ${anchorPosition.x} ${anchorPosition.y + tailTipOffset}
-      L ${anchorPosition.x} ${anchorPosition.y - tailTipOffset}
-      Q ${(bubbleX + anchorPosition.x) / 2} ${bubbleY}
-        ${bubbleX} ${bubbleY + tailWidth/2}
+      M ${bubbleX} ${bubbleY - baseWidth/2}
+      L ${tipX} ${tipY}
+      L ${bubbleX} ${bubbleY + baseWidth/2}
       Z
     `;
     
@@ -240,7 +183,7 @@ const CommentBubble = ({ group, chart, series, chartContainer, placedBubbles, on
 
   return (
     <>
-      {/* 吹き出しの尻尾（矢印の代わり） */}
+      {/* 吹き出しの尻尾（シンプルな三角形） */}
       <svg 
         className="speech-bubble-tail-svg"
         style={{
@@ -255,22 +198,15 @@ const CommentBubble = ({ group, chart, series, chartContainer, placedBubbles, on
       >
         <defs>
           <linearGradient id={`gradient-${comment.id}`} x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="rgba(94, 234, 212, 0.15)" />
-            <stop offset="100%" stopColor="rgba(94, 234, 212, 0.6)" />
+            <stop offset="0%" stopColor="rgba(94, 234, 212, 0.6)" />
+            <stop offset="100%" stopColor="rgba(94, 234, 212, 0.15)" />
           </linearGradient>
         </defs>
         <path
           d={createSpeechBubbleTail()}
           fill={`url(#gradient-${comment.id})`}
-          stroke="rgba(94, 234, 212, 0.4)"
-          strokeWidth="1"
-        />
-        {/* 先端の点 */}
-        <circle
-          cx={anchorPosition.x}
-          cy={anchorPosition.y}
-          r="3"
-          fill="rgba(94, 234, 212, 0.8)"
+          stroke="rgba(94, 234, 212, 0.3)"
+          strokeWidth="0.5"
         />
       </svg>
 
