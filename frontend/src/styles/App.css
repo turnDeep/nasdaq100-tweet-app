@@ -232,10 +232,10 @@ body {
 
 /* モダンなコメントバブル（枠なし、半透過背景） */
 .comment-bubble-modern {
-  background: #2cbfc741;
-  border: none; /* 枠なし */
+  background: rgba(94, 234, 212, 0.25);
+  border: 1px solid rgba(94, 234, 212, 0.4);
   border-radius: 10px;
-  padding: 4px 10px; /* 余白を最小限に */
+  padding: 4px 10px;
   cursor: pointer;
   transition: all 0.3s ease;
   animation: fadeInBubble 0.4s ease;
@@ -244,7 +244,9 @@ body {
   gap: 4px;
   white-space: nowrap;
   font-size: 0.85rem;
-  height: 35px; /* 固定高さ */
+  height: 35px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 2px 8px rgba(94, 234, 212, 0.15);
 }
 
 @keyframes fadeInBubble {
@@ -259,8 +261,10 @@ body {
 }
 
 .comment-bubble-modern:hover {
-  background: #2cbfc7ef;
+  background: rgba(94, 234, 212, 0.5);
+  border-color: rgba(94, 234, 212, 0.6);
   transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(94, 234, 212, 0.25);
 }
 
 /* バブル内の絵文字 */
@@ -354,8 +358,8 @@ body {
   line-height: 1.2;
 }
 
-/* アンカーラインSVG */
-.anchor-line-svg {
+/* 吹き出しの尻尾SVG */
+.speech-bubble-tail-svg {
   pointer-events: none !important;
 }
 
