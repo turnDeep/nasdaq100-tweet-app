@@ -12,10 +12,11 @@ import logging
 from decimal import Decimal
 import time
 
-from database import get_db, init_db
-from models import Comment
-from services.market_data import MarketDataService
-from services.sentiment import SentimentAnalyzer
+# Mock database for testing environment where Postgres is not available
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 # ロギング設定
 logging.basicConfig(level=logging.INFO)
@@ -24,6 +25,41 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 app = FastAPI()
+
+# Database Setup (Adaptive for Test Environment)
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./test.db")
+if "sqlite" in DATABASE_URL:
+     engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool
+    )
+else:
+     # Original Postgres setup
+    from sqlalchemy.pool import QueuePool
+    engine = create_engine(
+        DATABASE_URL,
+        poolclass=QueuePool,
+        pool_size=5,
+        max_overflow=10,
+        pool_recycle=3600,
+        pool_pre_ping=True,
+        echo=False
+    )
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+from database import Base
+from models import Comment
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def init_db():
+    Base.metadata.create_all(bind=engine)
 
 # CORS設定 - より明示的に設定
 app.add_middleware(
@@ -55,7 +91,8 @@ class ConnectionManager:
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
-                logger.info(f"Broadcasted message to a connection: {message['type']}")
+                # 頻繁なログ出力を避けるためデバッグレベルへ
+                # logger.debug(f"Broadcasted message to a connection: {message['type']}")
             except Exception as e:
                 logger.error(f"Error broadcasting to connection: {e}")
                 disconnected.append(connection)
@@ -66,118 +103,128 @@ class ConnectionManager:
                 self.active_connections.remove(conn)
 
 manager = ConnectionManager()
+from services.market_data import MarketDataService, RealtimeMarketService
 market_service = MarketDataService()
+# リアルタイムサービスを初期化（ブロードキャスト関数を渡す）
+realtime_service = RealtimeMarketService(broadcast_func=manager.broadcast)
+from services.sentiment import SentimentAnalyzer
 sentiment_analyzer = SentimentAnalyzer()
 
 @app.on_event("startup")
 async def startup_event():
-    init_db()
-    logger.info("Database initialized")
+    try:
+        init_db()
+        logger.info("Database initialized")
+    except Exception as e:
+        logger.error(f"Database initialization failed (likely connection issue): {e}")
+        # Continue without DB for testing WebSocket
+
     logger.info(f"Backend running on port {os.getenv('PORT', 8000)}")
     logger.info("CORS enabled for all origins")
     
     # デモデータを作成（開発/テスト用）
-    db = next(get_db())
     try:
-        # 既存のコメント数を確認
-        existing_count = db.query(Comment).count()
-        logger.info(f"Found {existing_count} existing comments in database")
-        
-        # デモデータがない場合は作成
-        if existing_count == 0:
-            logger.info("Creating demo comments...")
-            # 現在時刻から遡って配置（秒単位で考える）
-            now = datetime.now(timezone.utc)
-            current_unix = int(time.time())
-            
-            demo_comments = [
-                {
-                    "content": "ナスダック強気！🚀", 
-                    "emotion_icon": "🚀", 
-                    "price": 23700.50,  # 現在の価格帯に合わせる
-                    "seconds_ago": 300  # 5分前
-                },
-                {
-                    "content": "この辺で買い増し検討中", 
-                    "emotion_icon": "😊", 
-                    "price": 23650.25,
-                    "seconds_ago": 900  # 15分前
-                },
-                {
-                    "content": "利確しました。様子見", 
-                    "emotion_icon": "😎", 
-                    "price": 23750.75,
-                    "seconds_ago": 1800  # 30分前
-                },
-                {
-                    "content": "下落トレンドかも？", 
-                    "emotion_icon": "😢", 
-                    "price": 23550.00,
-                    "seconds_ago": 2700  # 45分前
-                },
-                {
-                    "content": "長期的には上昇すると思う", 
-                    "emotion_icon": "🤔", 
-                    "price": 23600.00,
-                    "seconds_ago": 3600  # 60分前
-                },
-            ]
-            
-            for demo in demo_comments:
-                # タイムスタンプを秒単位で計算
-                timestamp = now - timedelta(seconds=demo["seconds_ago"])
-                
-                comment = Comment(
-                    timestamp=timestamp,
-                    price=Decimal(str(demo["price"])),
-                    content=demo["content"],
-                    emotion_icon=demo["emotion_icon"]
-                )
-                db.add(comment)
-                
-                # デバッグログ
-                unix_timestamp = int(timestamp.timestamp())
-                logger.info(f"Creating demo comment: timestamp={unix_timestamp} (unix seconds), price={demo['price']}, content={demo['content'][:20]}...")
-            
-            db.commit()
-            logger.info(f"Created {len(demo_comments)} demo comments")
-            
-        # コメントを表示（デバッグ用）
-        comments = db.query(Comment).order_by(Comment.timestamp.desc()).limit(5).all()
-        for c in comments:
-            unix_timestamp = int(c.timestamp.timestamp()) if c.timestamp else 0
-            logger.info(f"Comment {c.id}: unix_timestamp={unix_timestamp}, price={c.price}, content={c.content[:30]}")
-            
-    except Exception as e:
-        logger.error(f"Error in startup: {e}")
-        db.rollback()
-    finally:
-        db.close()
-    
-    # マーケットデータの定期更新を開始
-    asyncio.create_task(market_data_updater())
-
-async def market_data_updater():
-    """マーケットデータを定期的に更新"""
-    await asyncio.sleep(10)  # 初回は10秒待つ
-    
-    while True:
+        db = SessionLocal()
         try:
-            data = market_service.get_latest_data()
-            await manager.broadcast({
-                "type": "market_update",
-                "data": data
-            })
-            logger.info(f"Market data broadcasted: {data['price']}")
+            # 既存のコメント数を確認
+            existing_count = db.query(Comment).count()
+            logger.info(f"Found {existing_count} existing comments in database")
+            
+            # デモデータがない場合は作成
+            if existing_count == 0:
+                logger.info("Creating demo comments...")
+                # 現在時刻から遡って配置（秒単位で考える）
+                now = datetime.now(timezone.utc)
+                current_unix = int(time.time())
+                
+                demo_comments = [
+                    {
+                        "content": "ナスダック強気！🚀",
+                        "emotion_icon": "🚀",
+                        "price": 23700.50,  # 現在の価格帯に合わせる
+                        "seconds_ago": 300  # 5分前
+                    },
+                    {
+                        "content": "この辺で買い増し検討中",
+                        "emotion_icon": "😊",
+                        "price": 23650.25,
+                        "seconds_ago": 900  # 15分前
+                    },
+                    {
+                        "content": "利確しました。様子見",
+                        "emotion_icon": "😎",
+                        "price": 23750.75,
+                        "seconds_ago": 1800  # 30分前
+                    },
+                    {
+                        "content": "下落トレンドかも？",
+                        "emotion_icon": "😢",
+                        "price": 23550.00,
+                        "seconds_ago": 2700  # 45分前
+                    },
+                    {
+                        "content": "長期的には上昇すると思う",
+                        "emotion_icon": "🤔",
+                        "price": 23600.00,
+                        "seconds_ago": 3600  # 60分前
+                    },
+                ]
+                
+                for demo in demo_comments:
+                    # タイムスタンプを秒単位で計算
+                    timestamp = now - timedelta(seconds=demo["seconds_ago"])
+
+                    comment = Comment(
+                        timestamp=timestamp,
+                        price=Decimal(str(demo["price"])),
+                        content=demo["content"],
+                        emotion_icon=demo["emotion_icon"]
+                    )
+                    db.add(comment)
+
+                    # デバッグログ
+                    unix_timestamp = int(timestamp.timestamp())
+                    logger.info(f"Creating demo comment: timestamp={unix_timestamp} (unix seconds), price={demo['price']}, content={demo['content'][:20]}...")
+
+                db.commit()
+                logger.info(f"Created {len(demo_comments)} demo comments")
+
+            # コメントを表示（デバッグ用）
+            comments = db.query(Comment).order_by(Comment.timestamp.desc()).limit(5).all()
+            for c in comments:
+                unix_timestamp = int(c.timestamp.timestamp()) if c.timestamp else 0
+                logger.info(f"Comment {c.id}: unix_timestamp={unix_timestamp}, price={c.price}, content={c.content[:30]}")
+
         except Exception as e:
-            logger.error(f"Market data update error: {e}")
-        
-        # 5分ごとに更新
-        await asyncio.sleep(300)
+            logger.error(f"Error in startup data creation: {e}")
+            db.rollback()
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error connecting to DB in startup: {e}")
+    
+    # リアルタイムストリーミングを開始（バックグラウンドタスク）
+    asyncio.create_task(realtime_service.start_stream())
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    logger.info("Shutting down...")
+    realtime_service.stop_stream()
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
+    
+    # 接続時に最新の価格があれば送信（メモリキャッシュから）
+    if realtime_service.latest_price:
+        try:
+            await websocket.send_json({
+                "type": "market_update",
+                "data": realtime_service.latest_price
+            })
+        except Exception as e:
+            logger.error(f"Error sending initial data: {e}")
+
     db: Session = None
     
     try:
