@@ -38,7 +38,7 @@ const Chart = ({ data, comments, onCandleClick }) => {
         text: comment.emotion_icon || '💬',
         hovertext: comment.content,
         showarrow: true,
-        arrowhead: 2,
+        arrowhead: 1,
         arrowsize: 1,
         arrowwidth: 2,
         arrowcolor: 'rgba(94, 234, 212, 0.8)',
