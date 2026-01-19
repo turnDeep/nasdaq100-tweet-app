@@ -23,6 +23,15 @@ const Chart = ({ data, comments, onCandleClick }) => {
   const annotations = useMemo(() => {
     if (!comments) return [];
     
+    // データ（ローソク足）を時間で検索できるようにマップ化
+    const dataMap = new Map();
+    if (data && data.length > 0) {
+      data.forEach(d => {
+        // 秒単位のタイムスタンプをキーにする
+        dataMap.set(d.time, d);
+      });
+    }
+
     return comments.map(comment => {
        // タイムスタンプの正規化（秒単位のUNIXタイムスタンプを想定）
        let timestamp = comment.timestamp;
@@ -32,9 +41,15 @@ const Chart = ({ data, comments, onCandleClick }) => {
           timestamp = timestamp / 1000;
        }
 
+       // 対応するローソク足を探す
+       const candle = dataMap.get(timestamp);
+
+       // Y座標の決定: ローソク足があればその高値、なければコメントの価格
+       const yPos = candle ? candle.high : comment.price;
+
        return {
         x: new Date(timestamp * 1000),
-        y: comment.price,
+        y: yPos,
         text: comment.emotion_icon || '💬',
         hovertext: comment.content,
         showarrow: true,
@@ -43,7 +58,7 @@ const Chart = ({ data, comments, onCandleClick }) => {
         arrowwidth: 2,
         arrowcolor: 'rgba(94, 234, 212, 0.8)',
         ax: 0,
-        ay: -30,
+        ay: -30, // 高値からさらに30px上に配置
         bgcolor: 'rgba(94, 234, 212, 0.25)',
         bordercolor: 'rgba(94, 234, 212, 0.6)',
         borderwidth: 1,
@@ -55,7 +70,7 @@ const Chart = ({ data, comments, onCandleClick }) => {
         captureevents: true
        };
     });
-  }, [comments]);
+  }, [comments, data]);
 
   // クリックハンドラー
   const handleClick = (event) => {
