@@ -1,16 +1,17 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, Response, Body
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
 import json
 import asyncio
-from typing import List, Dict
+from typing import List, Dict, Optional
 import os
 from dotenv import load_dotenv
 import logging
 from decimal import Decimal
 import time
+from pydantic import BaseModel
 
 # Mock database for testing environment where Postgres is not available
 from sqlalchemy import create_engine
@@ -49,7 +50,7 @@ else:
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 from database import Base
-from models import Comment
+from models import Comment, User, UserCredential, AuthChallenge
 
 def get_db():
     db = SessionLocal()
@@ -109,6 +110,28 @@ market_service = MarketDataService()
 realtime_service = RealtimeMarketService(broadcast_func=manager.broadcast)
 from services.sentiment import SentimentAnalyzer
 sentiment_analyzer = SentimentAnalyzer()
+from services.auth import AuthService
+auth_service = AuthService()
+
+# Auth Models
+class GatePasswordRequest(BaseModel):
+    password: str
+
+class RegisterOptionsRequest(BaseModel):
+    username: str
+
+class RegisterVerifyRequest(BaseModel):
+    username: str
+    user_id: str
+    response: dict
+    image_data: Optional[str] = None # Base64 string
+
+class LoginOptionsRequest(BaseModel):
+    username: str
+
+class LoginVerifyRequest(BaseModel):
+    username: str
+    response: dict
 
 @app.on_event("startup")
 async def startup_event():
@@ -122,87 +145,6 @@ async def startup_event():
     logger.info(f"Backend running on port {os.getenv('PORT', 8000)}")
     logger.info("CORS enabled for all origins")
     
-    # デモデータを作成（開発/テスト用）
-    try:
-        db = SessionLocal()
-        try:
-            # 既存のコメント数を確認
-            existing_count = db.query(Comment).count()
-            logger.info(f"Found {existing_count} existing comments in database")
-            
-            # デモデータがない場合は作成
-            if existing_count == 0:
-                logger.info("Creating demo comments...")
-                # 現在時刻から遡って配置（秒単位で考える）
-                now = datetime.now(timezone.utc)
-                current_unix = int(time.time())
-                
-                demo_comments = [
-                    {
-                        "content": "ナスダック強気！🚀",
-                        "emotion_icon": "🚀",
-                        "price": 23700.50,  # 現在の価格帯に合わせる
-                        "seconds_ago": 300  # 5分前
-                    },
-                    {
-                        "content": "この辺で買い増し検討中",
-                        "emotion_icon": "😊",
-                        "price": 23650.25,
-                        "seconds_ago": 900  # 15分前
-                    },
-                    {
-                        "content": "利確しました。様子見",
-                        "emotion_icon": "😎",
-                        "price": 23750.75,
-                        "seconds_ago": 1800  # 30分前
-                    },
-                    {
-                        "content": "下落トレンドかも？",
-                        "emotion_icon": "😢",
-                        "price": 23550.00,
-                        "seconds_ago": 2700  # 45分前
-                    },
-                    {
-                        "content": "長期的には上昇すると思う",
-                        "emotion_icon": "🤔",
-                        "price": 23600.00,
-                        "seconds_ago": 3600  # 60分前
-                    },
-                ]
-                
-                for demo in demo_comments:
-                    # タイムスタンプを秒単位で計算
-                    timestamp = now - timedelta(seconds=demo["seconds_ago"])
-
-                    comment = Comment(
-                        timestamp=timestamp,
-                        price=Decimal(str(demo["price"])),
-                        content=demo["content"],
-                        emotion_icon=demo["emotion_icon"]
-                    )
-                    db.add(comment)
-
-                    # デバッグログ
-                    unix_timestamp = int(timestamp.timestamp())
-                    logger.info(f"Creating demo comment: timestamp={unix_timestamp} (unix seconds), price={demo['price']}, content={demo['content'][:20]}...")
-
-                db.commit()
-                logger.info(f"Created {len(demo_comments)} demo comments")
-
-            # コメントを表示（デバッグ用）
-            comments = db.query(Comment).order_by(Comment.timestamp.desc()).limit(5).all()
-            for c in comments:
-                unix_timestamp = int(c.timestamp.timestamp()) if c.timestamp else 0
-                logger.info(f"Comment {c.id}: unix_timestamp={unix_timestamp}, price={c.price}, content={c.content[:30]}")
-
-        except Exception as e:
-            logger.error(f"Error in startup data creation: {e}")
-            db.rollback()
-        finally:
-            db.close()
-    except Exception as e:
-        logger.error(f"Error connecting to DB in startup: {e}")
-    
     # リアルタイムストリーミングを開始（バックグラウンドタスク）
     asyncio.create_task(realtime_service.start_stream())
 
@@ -210,6 +152,74 @@ async def startup_event():
 async def shutdown_event():
     logger.info("Shutting down...")
     realtime_service.stop_stream()
+
+# Auth Endpoints
+@app.post("/api/auth/gate")
+async def verify_gate(request: GatePasswordRequest, response: Response):
+    if auth_service.verify_gate_password(request.password):
+        # Set a simple cookie for gate access
+        response.set_cookie(key="gate_passed", value="true", httponly=True, max_age=86400)
+        return {"success": True}
+    raise HTTPException(status_code=401, detail="Invalid password")
+
+@app.post("/api/auth/register/options")
+async def register_options(request: RegisterOptionsRequest, db: Session = Depends(get_db)):
+    try:
+        options, user_id = auth_service.generate_registration_options(db, request.username)
+        from webauthn import options_to_json
+        return {"options": json.loads(options_to_json(options)), "user_id": user_id}
+    except Exception as e:
+        logger.error(f"Register options error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/auth/register/verify")
+async def register_verify(request: RegisterVerifyRequest, response: Response, db: Session = Depends(get_db)):
+    try:
+        user = auth_service.verify_registration(db, request.response, request.user_id, request.username, request.image_data)
+        # Set auth cookie
+        response.set_cookie(key="user_id", value=user.id, httponly=True, max_age=86400 * 30)
+        return {"success": True, "user": {"username": user.username, "profile_image": user.profile_image}}
+    except Exception as e:
+        logger.error(f"Register verify error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/auth/login/options")
+async def login_options(request: LoginOptionsRequest, db: Session = Depends(get_db)):
+    try:
+        options = auth_service.generate_login_options(db, request.username)
+        from webauthn import options_to_json
+        return json.loads(options_to_json(options))
+    except Exception as e:
+        logger.error(f"Login options error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/auth/login/verify")
+async def login_verify(request: LoginVerifyRequest, response: Response, db: Session = Depends(get_db)):
+    try:
+        user = auth_service.verify_login(db, request.response, request.username)
+        # Set auth cookie
+        response.set_cookie(key="user_id", value=user.id, httponly=True, max_age=86400 * 30)
+        return {"success": True, "user": {"username": user.username, "profile_image": user.profile_image}}
+    except Exception as e:
+        logger.error(f"Login verify error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/auth/me")
+async def get_current_user(request: Request, db: Session = Depends(get_db)):
+    user_id = request.cookies.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user = auth_service.get_user(db, user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    return {"id": user.id, "username": user.username, "profile_image": user.profile_image}
+
+@app.post("/api/auth/logout")
+async def logout(response: Response):
+    response.delete_cookie("user_id")
+    return {"success": True}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -233,6 +243,9 @@ async def websocket_endpoint(websocket: WebSocket):
             logger.info(f"Received WebSocket message: {data}")
             
             if data["type"] == "post_comment":
+                # Check Gate Pass (Simplistic check) - ideally validate session/cookie too
+                # For now, we trust the connection if they can post, or we could require auth payload
+
                 # 新しいDBセッションを作成
                 db = next(get_db())
                 try:
@@ -242,20 +255,13 @@ async def websocket_endpoint(websocket: WebSocket):
                     emotion_icon = data.get("emotion_icon")
                     
                     # タイムスタンプの処理
-                    # クライアントから送られたtimestamp（ローソク足の時間）を使用
                     if "timestamp" in data and data["timestamp"]:
-                        # クライアントから送られたタイムスタンプ（秒単位のUNIXタイム）
                         client_timestamp = data["timestamp"]
-                        logger.info(f"Received timestamp from client: {client_timestamp} (type: {type(client_timestamp)})")
-                        
-                        # timezone-awareなdatetimeに変換
                         timestamp = datetime.fromtimestamp(client_timestamp, tz=timezone.utc)
                     else:
-                        # 現在時刻をUTCで取得（timezone-aware）
                         timestamp = datetime.now(timezone.utc)
                     
                     if not content:
-                        logger.warning("Empty comment content received")
                         await websocket.send_json({
                             "type": "error",
                             "message": "コメント内容が空です"
@@ -273,28 +279,22 @@ async def websocket_endpoint(websocket: WebSocket):
                     db.commit()
                     db.refresh(comment)
                     
-                    # UNIXタイムスタンプ（秒）として送信
                     comment_timestamp = int(comment.timestamp.timestamp())
-                    
-                    # 保存成功をログ
-                    logger.info(f"Comment saved: ID={comment.id}, unix_timestamp={comment_timestamp}, price={comment.price}, content={comment.content[:50]}...")
                     
                     # 全クライアントにブロードキャスト
                     broadcast_data = {
                         "type": "new_comment",
                         "data": {
                             "id": comment.id,
-                            "timestamp": comment_timestamp,  # UNIXタイムスタンプ（秒）として送信
+                            "timestamp": comment_timestamp,
                             "price": float(comment.price),
                             "content": comment.content,
                             "emotion_icon": comment.emotion_icon
                         }
                     }
                     
-                    logger.info(f"Broadcasting comment: ID={broadcast_data['data']['id']}, timestamp={comment_timestamp} (unix seconds)")
                     await manager.broadcast(broadcast_data)
                     
-                    # 送信者に確認メッセージを送信
                     await websocket.send_json({
                         "type": "comment_saved",
                         "data": broadcast_data["data"]
@@ -334,52 +334,30 @@ async def get_market_data(symbol: str, interval: str):
     try:
         logger.info(f"Fetching market data for {symbol} with interval {interval}")
         data = market_service.get_historical_data(symbol, interval)
-        
-        # デバッグ：最初と最後のデータポイントをログ
-        if data and len(data) > 0:
-            logger.info(f"Market data: first timestamp={data[0]['time']}, last timestamp={data[-1]['time']}")
-            logger.info(f"Market data: first price={data[0]['close']}, last price={data[-1]['close']}")
-        
         return {"success": True, "data": data}
     except Exception as e:
         logger.error(f"Error getting market data: {e}")
-        # エラーでも空のデータを返す
         return {"success": True, "data": []}
 
 @app.get("/api/comments")
 async def get_comments(hours: int = 24, interval: str = None, db: Session = Depends(get_db)):
     """コメントを取得（タイムスタンプをUNIXタイムスタンプ（秒）として返す）"""
     try:
-        # すべてのコメントを取得（フィルタリングなし）
         comments = db.query(Comment).order_by(Comment.timestamp.desc()).all()
-        
-        logger.info(f"Found {len(comments)} total comments in database")
-        
         result = {
             "comments": []
         }
-        
-        # 各コメントを処理
         for c in comments:
             unix_timestamp = int(c.timestamp.timestamp()) if c.timestamp else int(datetime.now(timezone.utc).timestamp())
-            
             comment_data = {
                 "id": c.id,
-                "timestamp": unix_timestamp,  # UNIXタイムスタンプ（秒）
+                "timestamp": unix_timestamp,
                 "price": float(c.price),
                 "content": c.content,
                 "emotion_icon": c.emotion_icon
             }
-            
             result["comments"].append(comment_data)
-            
-            # デバッグ：最初の5件を詳細ログ
-            if len(result["comments"]) <= 5:
-                logger.info(f"Comment {c.id}: unix_timestamp={unix_timestamp}, price={c.price}, content={c.content[:30]}")
-        
-        logger.info(f"Returning {len(result['comments'])} comments with UNIX timestamps (seconds)")
         return result
-        
     except Exception as e:
         logger.error(f"Error getting comments: {e}", exc_info=True)
         return {"comments": []}
@@ -394,13 +372,11 @@ async def get_sentiment(
     """センチメント分析結果を取得（期間指定可能）"""
     try:
         if start and end:
-            # UNIXタイムスタンプからdatetimeへの変換
             start_dt = datetime.fromtimestamp(start, tz=timezone.utc)
             end_dt = datetime.fromtimestamp(end, tz=timezone.utc)
             logger.info(f"Analyzing sentiment for range: {start_dt} to {end_dt}")
             analysis = sentiment_analyzer.analyze_comments_in_range(db, start_dt, end_dt)
         else:
-            # すべてのコメントを対象にセンチメント分析
             analysis = sentiment_analyzer.analyze_all_comments(db)
 
         return analysis
