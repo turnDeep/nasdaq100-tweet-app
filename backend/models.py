@@ -11,7 +11,10 @@ class Comment(Base):
     price = Column(DECIMAL(10, 2), nullable=False)
     content = Column(Text, nullable=False)
     emotion_icon = Column(String(255))
+    user_id = Column(String, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", backref="comments")
 
 class User(Base):
     __tablename__ = "users"

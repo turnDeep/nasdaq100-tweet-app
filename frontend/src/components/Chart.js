@@ -1,7 +1,7 @@
 import React, { useMemo, useCallback, useRef } from 'react';
 import Plot from 'react-plotly.js';
 
-const Chart = ({ data, comments, onCandleClick, onVisibleRangeChange }) => {
+const Chart = ({ data, comments, currentUser, onDeleteComment, onCandleClick, onVisibleRangeChange }) => {
   const chartRef = useRef(null);
   const debounceTimerRef = useRef(null);
 
@@ -46,10 +46,12 @@ const Chart = ({ data, comments, onCandleClick, onVisibleRangeChange }) => {
        const candle = dataMap.get(timestamp);
        const yPos = candle ? candle.high : comment.price;
 
+       const isOwner = currentUser && currentUser.id === comment.user_id;
+
        return {
         x: new Date(timestamp * 1000),
         y: yPos,
-        text: comment.emotion_icon || '💬',
+        text: (comment.emotion_icon || '💬') + (isOwner ? ' 🗑️' : ''),
         hovertext: comment.content,
         showarrow: true,
         arrowhead: 1,
@@ -58,7 +60,7 @@ const Chart = ({ data, comments, onCandleClick, onVisibleRangeChange }) => {
         arrowcolor: 'rgba(94, 234, 212, 0.8)',
         ax: 0,
         ay: -30,
-        bgcolor: 'rgba(94, 234, 212, 0.25)',
+        bgcolor: isOwner ? 'rgba(255, 235, 59, 0.5)' : 'rgba(94, 234, 212, 0.25)',
         bordercolor: 'rgba(94, 234, 212, 0.6)',
         borderwidth: 1,
         borderpad: 4,
@@ -69,7 +71,7 @@ const Chart = ({ data, comments, onCandleClick, onVisibleRangeChange }) => {
         captureevents: true
        };
     });
-  }, [comments, data]);
+  }, [comments, data, currentUser]);
 
   // レイアウト変更（ズーム・パン）ハンドラー
   const handleRelayout = useCallback((event) => {
@@ -125,6 +127,17 @@ const Chart = ({ data, comments, onCandleClick, onVisibleRangeChange }) => {
     onCandleClick(candleData);
   };
 
+  const handleAnnotationClick = useCallback((event) => {
+    if (!onDeleteComment) return;
+    const index = event.index;
+    const comment = comments[index];
+    if (comment && currentUser && comment.user_id === currentUser.id) {
+        if (window.confirm('このコメントを削除しますか？')) {
+            onDeleteComment(comment.id);
+        }
+    }
+  }, [comments, currentUser, onDeleteComment]);
+
   return (
     <div className="chart-container" style={{ height: '600px', padding: '2rem' }}>
       <div className="chart-instructions">
@@ -156,6 +169,7 @@ const Chart = ({ data, comments, onCandleClick, onVisibleRangeChange }) => {
         useResizeHandler={true}
         style={{ width: '100%', height: '500px' }}
         onClick={handleClick}
+        onClickAnnotation={handleAnnotationClick}
         onRelayout={handleRelayout}
         config={{
            responsive: true,

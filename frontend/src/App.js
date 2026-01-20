@@ -168,6 +168,15 @@ function App() {
       loadSentiment(start, end);
   }, [loadSentiment]);
 
+  const handleDeleteComment = useCallback(async (commentId) => {
+    try {
+      await axios.delete(`${API_URL}/api/comments/${commentId}`, { withCredentials: true });
+    } catch (error) {
+      console.error('Failed to delete comment:', error);
+      alert('コメントの削除に失敗しました');
+    }
+  }, []);
+
   const updateChartWithNewPrice = useCallback((newPrice) => {
     setChartData(prevData => {
       if (!prevData || prevData.length === 0) return prevData;
@@ -218,6 +227,11 @@ function App() {
         if (!exists) return [data, ...prev];
         return prev;
       });
+      loadSentiment();
+    });
+
+    ws.on('delete_comment', (data) => {
+      setComments(prev => prev.filter(c => c.id !== data.id));
       loadSentiment();
     });
     
@@ -314,6 +328,8 @@ function App() {
         <Chart 
           data={chartData}
           comments={comments}
+          currentUser={currentUser}
+          onDeleteComment={handleDeleteComment}
           onCandleClick={handleCandleClick}
           onVisibleRangeChange={handleVisibleRangeChange}
         />

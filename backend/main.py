@@ -224,6 +224,7 @@ async def logout(response: Response):
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
+    user_id = websocket.cookies.get("user_id")
     
     # 接続時に最新の価格があれば送信（メモリキャッシュから）
     if realtime_service.latest_price:
@@ -273,7 +274,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         timestamp=timestamp,
                         price=Decimal(str(price)),
                         content=content,
-                        emotion_icon=emotion_icon
+                        emotion_icon=emotion_icon,
+                        user_id=user_id
                     )
                     db.add(comment)
                     db.commit()
@@ -289,7 +291,8 @@ async def websocket_endpoint(websocket: WebSocket):
                             "timestamp": comment_timestamp,
                             "price": float(comment.price),
                             "content": comment.content,
-                            "emotion_icon": comment.emotion_icon
+                            "emotion_icon": comment.emotion_icon,
+                            "user_id": comment.user_id
                         }
                     }
                     
@@ -354,7 +357,8 @@ async def get_comments(hours: int = 24, interval: str = None, db: Session = Depe
                 "timestamp": unix_timestamp,
                 "price": float(c.price),
                 "content": c.content,
-                "emotion_icon": c.emotion_icon
+                "emotion_icon": c.emotion_icon,
+                "user_id": c.user_id
             }
             result["comments"].append(comment_data)
         return result
@@ -383,6 +387,30 @@ async def get_sentiment(
     except Exception as e:
         logger.error(f"Error getting sentiment: {e}")
         return {"buy_percentage": 50, "sell_percentage": 50, "total_comments": 0}
+
+@app.delete("/api/comments/{comment_id}")
+async def delete_comment(comment_id: int, request: Request, db: Session = Depends(get_db)):
+    user_id = request.cookies.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    comment = db.query(Comment).filter(Comment.id == comment_id).first()
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+
+    if comment.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this comment")
+
+    db.delete(comment)
+    db.commit()
+
+    # Broadcast deletion
+    await manager.broadcast({
+        "type": "delete_comment",
+        "data": {"id": comment_id}
+    })
+
+    return {"success": True}
 
 if __name__ == "__main__":
     import uvicorn
