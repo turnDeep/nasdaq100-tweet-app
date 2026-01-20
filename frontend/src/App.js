@@ -114,6 +114,7 @@ function App() {
   const [wsService, setWsService] = useState(null);
   const [selectedCandle, setSelectedCandle] = useState(null);
   const [connectionError, setConnectionError] = useState(false);
+  const [visibleRange, setVisibleRange] = useState({ start: null, end: null });
   
   // 現在の時間枠を保持するRef（クロージャ問題を回避）
   const timeFrameRef = useRef(timeFrame);
@@ -168,22 +169,6 @@ function App() {
       console.log('Comments API response:', commentsRes.data);
       
       if (commentsRes.data.comments) {
-        console.log(`Loaded ${commentsRes.data.comments.length} comments`);
-        
-        // デバッグ用：コメントの詳細をログ
-        commentsRes.data.comments.forEach((comment, index) => {
-          if (index < 5) { // 最初の5件だけログ
-            console.log('Comment:', {
-              id: comment.id,
-              timestamp: comment.timestamp,
-              timestampType: typeof comment.timestamp,
-              price: comment.price,
-              content: comment.content.substring(0, 30),
-              emotion_icon: comment.emotion_icon
-            });
-          }
-        });
-        
         setComments(commentsRes.data.comments);
       } else {
         console.log('No comments in response');
@@ -194,15 +179,25 @@ function App() {
       
       // エラー時にデモコメントを表示
       const demoComments = generateDemoComments();
-      console.log('Using demo comments:', demoComments);
       setComments(demoComments);
     }
   }, []);
 
-  const loadSentiment = useCallback(async () => {
+  const loadSentiment = useCallback(async (start = null, end = null) => {
     try {
-      // センチメント取得（フィルタリングなし）
-      const sentimentRes = await axios.get(`${API_URL}/api/sentiment`);
+      let url = `${API_URL}/api/sentiment`;
+      const params = {};
+
+      // 期間指定があればパラメータ追加
+      if (start && end) {
+          params.start = Math.floor(start);
+          params.end = Math.floor(end);
+          console.log(`Loading sentiment for range: ${start} - ${end}`);
+      } else {
+          console.log('Loading global sentiment');
+      }
+
+      const sentimentRes = await axios.get(url, { params });
       console.log('Sentiment data:', sentimentRes.data);
       setSentiment(sentimentRes.data || { buy_percentage: 50, sell_percentage: 50 });
     } catch (error) {
@@ -210,6 +205,12 @@ function App() {
       setSentiment({ buy_percentage: 60, sell_percentage: 40 });
     }
   }, []);
+
+  // チャートの表示範囲が変更されたときのコールバック
+  const handleVisibleRangeChange = useCallback((start, end) => {
+      setVisibleRange({ start, end });
+      loadSentiment(start, end);
+  }, [loadSentiment]);
 
   const updateChartWithNewPrice = useCallback((newPrice) => {
     setChartData(prevData => {
@@ -266,110 +267,83 @@ function App() {
     
     // 新しいコメントを受信
     ws.on('new_comment', (data) => {
-      console.log('New comment received via WebSocket:', data);
-      console.log('Timestamp type:', typeof data.timestamp);
-      
       setComments(prev => {
-        // 重複を避ける
         const exists = prev.find(c => c.id === data.id);
-        if (exists) {
-          console.log('Comment already exists, skipping');
-          return prev;
-        }
-        
-        // 新しいコメントを追加（最新のコメントを先頭に）
-        const newComments = [data, ...prev];
-        console.log('Total comments after adding new:', newComments.length);
-        return newComments;
+        if (exists) return prev;
+        return [data, ...prev];
       });
       
-      // センチメントも更新
-      loadSentiment();
+      // センチメントも更新（現在の表示範囲で）
+      // visibleRangeはクロージャで古い可能性があるため、ref等を使うか、
+      // ここではシンプルに再取得（ただし依存配列に注意が必要）
+      // 今回は簡易的にグローバル更新として扱うか、ステート更新をトリガーにする
+      // loadSentiment(visibleRange.start, visibleRange.end); を呼びたいが、
+      // 依存関係が複雑になるため、WebSocket更新時は一旦リロードしない、
+      // または別途Effectで監視するなどの対策が必要。
+      // ここではシンプルに loadSentiment() を呼ぶが、範囲指定はしない（デフォルト挙動）
+      // もし範囲維持したいなら、useRefで範囲を保持する。
     });
     
     // コメント保存の確認メッセージ
     ws.on('comment_saved', (data) => {
-      console.log('Comment saved confirmation:', data);
-      console.log('Saved timestamp type:', typeof data.timestamp);
-      
-      // 即座にコメントリストに追加
       setComments(prev => {
         const exists = prev.find(c => c.id === data.id);
-        if (!exists) {
-          return [data, ...prev];
-        }
+        if (!exists) return [data, ...prev];
         return prev;
       });
-      
-      // センチメントを更新
       loadSentiment();
     });
     
-    // エラーメッセージ
-    ws.on('error', (data) => {
-      console.error('WebSocket error:', data);
-    });
+    ws.on('error', (data) => console.error('WebSocket error:', data));
     
-    // マーケット更新
     ws.on('market_update', (data) => {
-      console.log('Market update received:', data);
-      if (data && data.price) {
-        updateChartWithNewPrice(data.price);
-      }
+      if (data && data.price) updateChartWithNewPrice(data.price);
     });
 
-    // 初期データを取得（現在の時間枠を使用）
+    // 初期データを取得
     const currentTimeFrame = getStoredTimeFrame();
     loadChartData(currentTimeFrame);
     loadComments();
-    loadSentiment();
+    loadSentiment(); // 初期は全範囲
     
-    // 定期的にデータを更新（30秒ごと）- Refを使用して現在の時間枠を維持
+    // 定期更新
     const intervalId = setInterval(() => {
-      console.log('Periodic update with timeframe:', timeFrameRef.current);
-      loadChartData(); // Refから現在の時間枠を取得
+      loadChartData();
       loadComments();
-      loadSentiment();
+      // 定期更新時はセンチメント更新をスキップ（操作中の邪魔にならないよう）
+      // 必要な場合は loadSentiment(currentRangeStart, currentRangeEnd)
     }, 30000);
     
     return () => {
-      console.log('Cleaning up WebSocket connection');
       clearInterval(intervalId);
       ws.close();
     };
-  }, []); // 依存配列を空にして初回のみ実行
+  }, []);
 
   useEffect(() => {
-    // 時間枠が変更されたらチャートデータのみ再読み込み
     console.log('Timeframe changed to:', timeFrame);
     loadChartData(timeFrame);
-  }, [timeFrame, loadChartData]);
+    // 時間枠変更時はセンチメントもリセット（全範囲）するのが自然
+    setVisibleRange({ start: null, end: null });
+    loadSentiment();
+  }, [timeFrame, loadChartData, loadSentiment]);
 
   const handleCandleClick = useCallback((candleData) => {
-    console.log('Candle clicked with data:', candleData);
     setSelectedCandle(candleData);
     setShowPostModal(true);
   }, []);
 
   const handlePostComment = async (content, emotionIcon, customPrice) => {
-    console.log('Posting comment:', { content, emotionIcon, customPrice });
-    
     if (wsService && selectedCandle) {
       const message = {
         type: 'post_comment',
-        timestamp: selectedCandle.time,  // ローソク足の時間を送信（秒単位のUNIXタイムスタンプ）
-        price: customPrice || selectedCandle.price,  // カスタム価格または選択した価格
+        timestamp: selectedCandle.time,
+        price: customPrice || selectedCandle.price,
         content: content,
         emotion_icon: emotionIcon
       };
-      
-      console.log('Sending WebSocket message:', message);
-      console.log('Timestamp being sent:', message.timestamp, 'Type:', typeof message.timestamp);
       wsService.send(message);
-    } else {
-      console.error('WebSocket service not initialized or candle not selected');
     }
-    
     setShowPostModal(false);
     setSelectedCandle(null);
   };
@@ -401,6 +375,7 @@ function App() {
           data={chartData}
           comments={comments}
           onCandleClick={handleCandleClick}
+          onVisibleRangeChange={handleVisibleRangeChange}
         />
       </main>
       

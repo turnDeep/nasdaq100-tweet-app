@@ -385,11 +385,24 @@ async def get_comments(hours: int = 24, interval: str = None, db: Session = Depe
         return {"comments": []}
 
 @app.get("/api/sentiment")
-async def get_sentiment(interval: str = None, db: Session = Depends(get_db)):
-    """センチメント分析結果を取得"""
+async def get_sentiment(
+    interval: str = None,
+    start: int = None,
+    end: int = None,
+    db: Session = Depends(get_db)
+):
+    """センチメント分析結果を取得（期間指定可能）"""
     try:
-        # すべてのコメントを対象にセンチメント分析
-        analysis = sentiment_analyzer.analyze_all_comments(db)
+        if start and end:
+            # UNIXタイムスタンプからdatetimeへの変換
+            start_dt = datetime.fromtimestamp(start, tz=timezone.utc)
+            end_dt = datetime.fromtimestamp(end, tz=timezone.utc)
+            logger.info(f"Analyzing sentiment for range: {start_dt} to {end_dt}")
+            analysis = sentiment_analyzer.analyze_comments_in_range(db, start_dt, end_dt)
+        else:
+            # すべてのコメントを対象にセンチメント分析
+            analysis = sentiment_analyzer.analyze_all_comments(db)
+
         return analysis
     except Exception as e:
         logger.error(f"Error getting sentiment: {e}")
