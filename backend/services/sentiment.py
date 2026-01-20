@@ -21,6 +21,14 @@ class SentimentAnalyzer:
         comments = db.query(Comment).all()
         return self._analyze_comments(comments)
     
+    def analyze_comments_in_range(self, db: Session, start: datetime, end: datetime) -> dict:
+        """指定された期間のコメントからセンチメントを分析"""
+        comments = db.query(Comment).filter(
+            Comment.timestamp >= start,
+            Comment.timestamp <= end
+        ).all()
+        return self._analyze_comments(comments)
+
     def _analyze_comments(self, comments) -> dict:
         """コメントリストからセンチメントを分析"""
         buy_count = 0

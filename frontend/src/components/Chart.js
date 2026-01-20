@@ -1,7 +1,10 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useCallback, useRef } from 'react';
 import Plot from 'react-plotly.js';
 
-const Chart = ({ data, comments, onCandleClick }) => {
+const Chart = ({ data, comments, onCandleClick, onVisibleRangeChange }) => {
+  const chartRef = useRef(null);
+  const debounceTimerRef = useRef(null);
+
   // チャートデータの変換
   const chartData = useMemo(() => {
     if (!data || data.length === 0) return [];
@@ -27,24 +30,20 @@ const Chart = ({ data, comments, onCandleClick }) => {
     const dataMap = new Map();
     if (data && data.length > 0) {
       data.forEach(d => {
-        // 秒単位のタイムスタンプをキーにする
         dataMap.set(d.time, d);
       });
     }
 
     return comments.map(comment => {
-       // タイムスタンプの正規化（秒単位のUNIXタイムスタンプを想定）
+       // タイムスタンプの正規化
        let timestamp = comment.timestamp;
        if (typeof timestamp === 'string') {
           timestamp = new Date(timestamp).getTime() / 1000;
-       } else if (timestamp > 1000000000000) { // ミリ秒判定
+       } else if (timestamp > 1000000000000) {
           timestamp = timestamp / 1000;
        }
 
-       // 対応するローソク足を探す
        const candle = dataMap.get(timestamp);
-
-       // Y座標の決定: ローソク足があればその高値、なければコメントの価格
        const yPos = candle ? candle.high : comment.price;
 
        return {
@@ -58,7 +57,7 @@ const Chart = ({ data, comments, onCandleClick }) => {
         arrowwidth: 2,
         arrowcolor: 'rgba(94, 234, 212, 0.8)',
         ax: 0,
-        ay: -30, // 高値からさらに30px上に配置
+        ay: -30,
         bgcolor: 'rgba(94, 234, 212, 0.25)',
         bordercolor: 'rgba(94, 234, 212, 0.6)',
         borderwidth: 1,
@@ -72,25 +71,57 @@ const Chart = ({ data, comments, onCandleClick }) => {
     });
   }, [comments, data]);
 
-  // クリックハンドラー
+  // レイアウト変更（ズーム・パン）ハンドラー
+  const handleRelayout = useCallback((event) => {
+    if (!onVisibleRangeChange) return;
+
+    // 軸範囲の変更があるかチェック
+    // Plotlyのrelayoutイベントは変更されたプロパティだけを含む
+    let start, end;
+
+    if (event['xaxis.range[0]'] && event['xaxis.range[1]']) {
+      // 範囲指定ズームの場合
+      start = event['xaxis.range[0]'];
+      end = event['xaxis.range[1]'];
+    } else if (event['xaxis.autorange'] === true) {
+      // オートレンジ（ダブルクリックリセットなど）の場合
+      // データ全体の範囲を取得する必要があるが、ここでは簡略化のためnullを渡して全範囲リロードを促すか、
+      // データの最小・最大から計算する
+      if (data && data.length > 0) {
+        start = new Date(data[0].time * 1000).toISOString();
+        end = new Date(data[data.length - 1].time * 1000).toISOString();
+      }
+    }
+
+    if (start && end) {
+      // デバウンス処理：連続イベントの最後だけ処理する
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+
+      debounceTimerRef.current = setTimeout(() => {
+        // 文字列の日時をUNIXタイムスタンプ（秒）に変換
+        const startTime = new Date(start).getTime() / 1000;
+        const endTime = new Date(end).getTime() / 1000;
+
+        console.log(`Visible range changed: ${start} to ${end}`);
+        onVisibleRangeChange(startTime, endTime);
+      }, 500); // 500msの遅延
+    }
+  }, [onVisibleRangeChange, data]);
+
   const handleClick = (event) => {
     if (!onCandleClick || !event.points || event.points.length === 0) return;
-
     const point = event.points[0];
-    
-    // データポイント（ローソク足）の情報を取得
-    // 注: point.x はDateオブジェクトまたは文字列
     const timestamp = new Date(point.x).getTime() / 1000;
-
     const candleData = {
       time: timestamp,
-      price: point.y, // クリックされた位置の価格（またはclose値）
+      price: point.y,
       open: point.data.open[point.pointNumber],
       high: point.data.high[point.pointNumber],
       low: point.data.low[point.pointNumber],
       close: point.data.close[point.pointNumber]
     };
-
     onCandleClick(candleData);
   };
 
@@ -100,6 +131,7 @@ const Chart = ({ data, comments, onCandleClick }) => {
         💡 チャート上のローソク足をクリックでコメント投稿
       </div>
       <Plot
+        ref={chartRef}
         data={chartData}
         layout={{
           autosize: true,
@@ -124,6 +156,7 @@ const Chart = ({ data, comments, onCandleClick }) => {
         useResizeHandler={true}
         style={{ width: '100%', height: '500px' }}
         onClick={handleClick}
+        onRelayout={handleRelayout}
         config={{
            responsive: true,
            displayModeBar: false,

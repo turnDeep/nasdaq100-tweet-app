@@ -3,7 +3,11 @@ import Chart from './components/Chart';
 import TimeFrameSelector from './components/TimeFrameSelector';
 import PositionIndicator from './components/PositionIndicator';
 import PostModal from './components/PostModal';
+import Gate from './components/Gate';
+import Auth from './components/Auth';
+import UserMenu from './components/UserMenu';
 import { WebSocketService } from './services/websocket';
+import { getCurrentUser } from './services/auth';
 import axios from 'axios';
 import './styles/App.css';
 
@@ -12,25 +16,17 @@ const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 // LocalStorageのキー
 const TIMEFRAME_STORAGE_KEY = 'nasdaq100_selected_timeframe';
 
-// デモデータ生成関数
+// デモデータ生成関数 (省略 - 変更なし)
 function generateDemoData(timeFrame) {
   const now = Math.floor(Date.now() / 1000);
   const intervals = {
-    '1m': 60,
-    '3m': 180,
-    '5m': 300,
-    '15m': 900,
-    '1H': 3600,
-    '4H': 14400,
-    '1D': 86400,
-    '1W': 604800
+    '1m': 60, '3m': 180, '5m': 300, '15m': 900,
+    '1H': 3600, '4H': 14400, '1D': 86400, '1W': 604800
   };
-  
   const interval = intervals[timeFrame] || 900;
   const numPoints = 100;
   const data = [];
-  let basePrice = 23700; // ナスダック100先物の現実的な価格帯に変更
-  
+  let basePrice = 23700;
   for (let i = 0; i < numPoints; i++) {
     const time = now - (numPoints - i) * interval;
     const change = (Math.random() - 0.5) * 100;
@@ -38,7 +34,6 @@ function generateDemoData(timeFrame) {
     const close = open + (Math.random() - 0.5) * 50;
     const high = Math.max(open, close) + Math.random() * 20;
     const low = Math.min(open, close) - Math.random() * 20;
-    
     data.push({
       time,
       open: parseFloat(open.toFixed(2)),
@@ -47,42 +42,20 @@ function generateDemoData(timeFrame) {
       close: parseFloat(close.toFixed(2)),
       volume: Math.floor(Math.random() * 1000000)
     });
-    
     basePrice = close;
   }
-  
   return data;
 }
 
-// デモコメント生成（タイムスタンプを秒単位で）
 function generateDemoComments() {
   const now = Math.floor(Date.now() / 1000);
   return [
-    {
-      id: 1,
-      timestamp: now - 300,  // 5分前
-      price: 23700.50,
-      content: 'ナスダック強気！🚀',
-      emotion_icon: '🚀'
-    },
-    {
-      id: 2,
-      timestamp: now - 900,  // 15分前
-      price: 23650.25,
-      content: 'この辺で買い増し検討中',
-      emotion_icon: '😊'
-    },
-    {
-      id: 3,
-      timestamp: now - 1800,  // 30分前
-      price: 23750.75,
-      content: '利確しました。様子見',
-      emotion_icon: '😎'
-    }
+    { id: 1, timestamp: now - 300, price: 23700.50, content: 'ナスダック強気！🚀', emotion_icon: '🚀' },
+    { id: 2, timestamp: now - 900, price: 23650.25, content: 'この辺で買い増し検討中', emotion_icon: '😊' },
+    { id: 3, timestamp: now - 1800, price: 23750.75, content: '利確しました。様子見', emotion_icon: '😎' }
   ];
 }
 
-// LocalStorageから時間枠を取得する関数
 function getStoredTimeFrame() {
   try {
     const stored = localStorage.getItem(TIMEFRAME_STORAGE_KEY);
@@ -92,10 +65,9 @@ function getStoredTimeFrame() {
   } catch (error) {
     console.error('Failed to load timeframe from localStorage:', error);
   }
-  return '15m'; // デフォルト値
+  return '15m';
 }
 
-// LocalStorageに時間枠を保存する関数
 function saveTimeFrame(timeFrame) {
   try {
     localStorage.setItem(TIMEFRAME_STORAGE_KEY, timeFrame);
@@ -105,7 +77,6 @@ function saveTimeFrame(timeFrame) {
 }
 
 function App() {
-  // LocalStorageから初期値を読み込む
   const [timeFrame, setTimeFrame] = useState(getStoredTimeFrame);
   const [comments, setComments] = useState([]);
   const [sentiment, setSentiment] = useState({ buy_percentage: 50, sell_percentage: 50 });
@@ -114,37 +85,42 @@ function App() {
   const [wsService, setWsService] = useState(null);
   const [selectedCandle, setSelectedCandle] = useState(null);
   const [connectionError, setConnectionError] = useState(false);
+  const [visibleRange, setVisibleRange] = useState({ start: null, end: null });
   
-  // 現在の時間枠を保持するRef（クロージャ問題を回避）
-  const timeFrameRef = useRef(timeFrame);
-  
-  // 時間枠が変更されたらRefも更新
-  useEffect(() => {
-    timeFrameRef.current = timeFrame;
-  }, [timeFrame]);
+  // Auth States
+  const [isGatePassed, setIsGatePassed] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
-  // 時間枠変更時の処理
+  const timeFrameRef = useRef(timeFrame);
+  useEffect(() => { timeFrameRef.current = timeFrame; }, [timeFrame]);
+
+  // Check Auth Status on Load
+  useEffect(() => {
+    const checkAuth = async () => {
+      // Check for gate cookie (simplified, relying on session persistence or re-entry)
+      // For this PoC, we might require gate entry every refresh if not persisted in local storage
+      // But let's check user session first
+      const user = await getCurrentUser();
+      if (user) {
+        setCurrentUser(user);
+        setIsGatePassed(true); // Logged in user implies gate passed previously
+      }
+      setAuthLoading(false);
+    };
+    checkAuth();
+  }, []);
+
   const handleTimeFrameChange = useCallback((newTimeFrame) => {
     console.log('Changing timeframe to:', newTimeFrame);
     setTimeFrame(newTimeFrame);
-    saveTimeFrame(newTimeFrame); // LocalStorageに保存
+    saveTimeFrame(newTimeFrame);
   }, []);
 
   const loadChartData = useCallback(async (specificTimeFrame) => {
     try {
-      // 引数が渡されない場合は、RefまたはStateから現在の時間枠を取得
       const tf = specificTimeFrame || timeFrameRef.current || timeFrame;
-      console.log('Loading chart data for timeframe:', tf);
-      
-      const res = await axios.get(`${API_URL}/api/market/^NDX/${tf}`, {
-        timeout: 10000,
-        headers: {
-          'Content-Type': 'application/json',
-        }
-      });
-      
-      console.log('Chart data loaded:', res.data);
-      
+      const res = await axios.get(`${API_URL}/api/market/^NDX/${tf}`, { timeout: 10000 });
       if (res.data.data && res.data.data.length > 0) {
         setChartData(res.data.data);
       }
@@ -152,58 +128,34 @@ function App() {
     } catch (error) {
       console.error('Failed to load chart data:', error);
       setConnectionError(true);
-      // デモデータを設定
       const tf = specificTimeFrame || timeFrameRef.current || timeFrame;
-      const demoData = generateDemoData(tf);
-      setChartData(demoData);
+      setChartData(generateDemoData(tf));
     }
   }, [timeFrame]);
 
   const loadComments = useCallback(async () => {
     try {
-      console.log('Loading all comments');
-      
-      // すべてのコメントを取得（フィルタリングなし）
       const commentsRes = await axios.get(`${API_URL}/api/comments`);
-      console.log('Comments API response:', commentsRes.data);
-      
       if (commentsRes.data.comments) {
-        console.log(`Loaded ${commentsRes.data.comments.length} comments`);
-        
-        // デバッグ用：コメントの詳細をログ
-        commentsRes.data.comments.forEach((comment, index) => {
-          if (index < 5) { // 最初の5件だけログ
-            console.log('Comment:', {
-              id: comment.id,
-              timestamp: comment.timestamp,
-              timestampType: typeof comment.timestamp,
-              price: comment.price,
-              content: comment.content.substring(0, 30),
-              emotion_icon: comment.emotion_icon
-            });
-          }
-        });
-        
         setComments(commentsRes.data.comments);
       } else {
-        console.log('No comments in response');
         setComments([]);
       }
     } catch (error) {
       console.error('Failed to load comments:', error);
-      
-      // エラー時にデモコメントを表示
-      const demoComments = generateDemoComments();
-      console.log('Using demo comments:', demoComments);
-      setComments(demoComments);
+      setComments(generateDemoComments());
     }
   }, []);
 
-  const loadSentiment = useCallback(async () => {
+  const loadSentiment = useCallback(async (start = null, end = null) => {
     try {
-      // センチメント取得（フィルタリングなし）
-      const sentimentRes = await axios.get(`${API_URL}/api/sentiment`);
-      console.log('Sentiment data:', sentimentRes.data);
+      let url = `${API_URL}/api/sentiment`;
+      const params = {};
+      if (start && end) {
+          params.start = Math.floor(start);
+          params.end = Math.floor(end);
+      }
+      const sentimentRes = await axios.get(url, { params });
       setSentiment(sentimentRes.data || { buy_percentage: 50, sell_percentage: 50 });
     } catch (error) {
       console.error('Failed to update sentiment:', error);
@@ -211,30 +163,20 @@ function App() {
     }
   }, []);
 
+  const handleVisibleRangeChange = useCallback((start, end) => {
+      setVisibleRange({ start, end });
+      loadSentiment(start, end);
+  }, [loadSentiment]);
+
   const updateChartWithNewPrice = useCallback((newPrice) => {
     setChartData(prevData => {
       if (!prevData || prevData.length === 0) return prevData;
-      
       const lastCandle = prevData[prevData.length - 1];
       const now = Math.floor(Date.now() / 1000);
-      
-      // 時間枠に応じた間隔を計算（Refから取得）
-      const intervals = {
-        '1m': 60,
-        '3m': 180,
-        '5m': 300,
-        '15m': 900,
-        '1H': 3600,
-        '4H': 14400,
-        '1D': 86400,
-        '1W': 604800
-      };
-      
+      const intervals = { '1m': 60, '3m': 180, '5m': 300, '15m': 900, '1H': 3600, '4H': 14400, '1D': 86400, '1W': 604800 };
       const interval = intervals[timeFrameRef.current] || 900;
       
-      // 新しいローソク足を作成するか、既存のものを更新するか判断
       if (now - lastCandle.time >= interval) {
-        // 新しいローソク足を追加
         const newCandle = {
           time: lastCandle.time + interval,
           open: lastCandle.close,
@@ -243,9 +185,8 @@ function App() {
           close: newPrice,
           volume: Math.floor(Math.random() * 1000000)
         };
-        return [...prevData.slice(-99), newCandle]; // 最新100本を保持
+        return [...prevData.slice(-99), newCandle];
       } else {
-        // 既存のローソク足を更新
         const updatedData = [...prevData];
         const last = updatedData[updatedData.length - 1];
         last.high = Math.max(last.high, newPrice);
@@ -254,125 +195,95 @@ function App() {
         return updatedData;
       }
     });
-  }, []); // 依存配列を空にしてRefを使用
+  }, []);
 
   useEffect(() => {
-    // WebSocket接続を初期化
+    if (!currentUser) return; // Only connect WS if authenticated
+
     const wsUrl = API_URL.replace('http', 'ws').replace('https', 'wss');
-    console.log('Initializing WebSocket connection to:', `${wsUrl}/ws`);
-    
     const ws = new WebSocketService(`${wsUrl}/ws`);
     setWsService(ws);
     
-    // 新しいコメントを受信
     ws.on('new_comment', (data) => {
-      console.log('New comment received via WebSocket:', data);
-      console.log('Timestamp type:', typeof data.timestamp);
-      
       setComments(prev => {
-        // 重複を避ける
         const exists = prev.find(c => c.id === data.id);
-        if (exists) {
-          console.log('Comment already exists, skipping');
-          return prev;
-        }
-        
-        // 新しいコメントを追加（最新のコメントを先頭に）
-        const newComments = [data, ...prev];
-        console.log('Total comments after adding new:', newComments.length);
-        return newComments;
+        if (exists) return prev;
+        return [data, ...prev];
       });
-      
-      // センチメントも更新
-      loadSentiment();
     });
     
-    // コメント保存の確認メッセージ
     ws.on('comment_saved', (data) => {
-      console.log('Comment saved confirmation:', data);
-      console.log('Saved timestamp type:', typeof data.timestamp);
-      
-      // 即座にコメントリストに追加
       setComments(prev => {
         const exists = prev.find(c => c.id === data.id);
-        if (!exists) {
-          return [data, ...prev];
-        }
+        if (!exists) return [data, ...prev];
         return prev;
       });
-      
-      // センチメントを更新
       loadSentiment();
     });
     
-    // エラーメッセージ
-    ws.on('error', (data) => {
-      console.error('WebSocket error:', data);
-    });
+    ws.on('error', (data) => console.error('WebSocket error:', data));
     
-    // マーケット更新
     ws.on('market_update', (data) => {
-      console.log('Market update received:', data);
-      if (data && data.price) {
-        updateChartWithNewPrice(data.price);
-      }
+      if (data && data.price) updateChartWithNewPrice(data.price);
     });
 
-    // 初期データを取得（現在の時間枠を使用）
     const currentTimeFrame = getStoredTimeFrame();
     loadChartData(currentTimeFrame);
     loadComments();
     loadSentiment();
     
-    // 定期的にデータを更新（30秒ごと）- Refを使用して現在の時間枠を維持
     const intervalId = setInterval(() => {
-      console.log('Periodic update with timeframe:', timeFrameRef.current);
-      loadChartData(); // Refから現在の時間枠を取得
+      loadChartData();
       loadComments();
-      loadSentiment();
     }, 30000);
     
     return () => {
-      console.log('Cleaning up WebSocket connection');
       clearInterval(intervalId);
       ws.close();
     };
-  }, []); // 依存配列を空にして初回のみ実行
+  }, [currentUser, loadChartData, loadComments, loadSentiment, updateChartWithNewPrice]);
 
   useEffect(() => {
-    // 時間枠が変更されたらチャートデータのみ再読み込み
-    console.log('Timeframe changed to:', timeFrame);
+    if (!currentUser) return;
     loadChartData(timeFrame);
-  }, [timeFrame, loadChartData]);
+    setVisibleRange({ start: null, end: null });
+    loadSentiment();
+  }, [timeFrame, currentUser, loadChartData, loadSentiment]);
 
   const handleCandleClick = useCallback((candleData) => {
-    console.log('Candle clicked with data:', candleData);
     setSelectedCandle(candleData);
     setShowPostModal(true);
   }, []);
 
   const handlePostComment = async (content, emotionIcon, customPrice) => {
-    console.log('Posting comment:', { content, emotionIcon, customPrice });
-    
     if (wsService && selectedCandle) {
       const message = {
         type: 'post_comment',
-        timestamp: selectedCandle.time,  // ローソク足の時間を送信（秒単位のUNIXタイムスタンプ）
-        price: customPrice || selectedCandle.price,  // カスタム価格または選択した価格
+        timestamp: selectedCandle.time,
+        price: customPrice || selectedCandle.price,
         content: content,
         emotion_icon: emotionIcon
       };
-      
-      console.log('Sending WebSocket message:', message);
-      console.log('Timestamp being sent:', message.timestamp, 'Type:', typeof message.timestamp);
       wsService.send(message);
-    } else {
-      console.error('WebSocket service not initialized or candle not selected');
     }
-    
     setShowPostModal(false);
     setSelectedCandle(null);
   };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setIsGatePassed(false);
+  };
+
+  if (authLoading) return <div style={{display:'flex',justifyContent:'center',alignItems:'center',height:'100vh'}}>Loading...</div>;
+
+  if (!isGatePassed) {
+    return <Gate onPass={() => setIsGatePassed(true)} />;
+  }
+
+  if (!currentUser) {
+    return <Auth onLogin={setCurrentUser} />;
+  }
 
   return (
     <div className="app">
@@ -387,7 +298,10 @@ function App() {
           onChange={handleTimeFrameChange} 
         />
         
-        <PositionIndicator sentiment={sentiment} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <PositionIndicator sentiment={sentiment} />
+          <UserMenu user={currentUser} onLogout={handleLogout} />
+        </div>
       </header>
       
       {connectionError && (
@@ -401,6 +315,7 @@ function App() {
           data={chartData}
           comments={comments}
           onCandleClick={handleCandleClick}
+          onVisibleRangeChange={handleVisibleRangeChange}
         />
       </main>
       
